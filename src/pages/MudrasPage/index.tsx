@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AIChat from 'components/AIChat';
 import FloatingChatButton from 'components/FloatingChatButton';
 import { Flex, Typography, Button, Modal, message } from 'antd';
-import { MessageOutlined } from '@ant-design/icons';
+import { MessageOutlined, CameraOutlined } from '@ant-design/icons';
 import { useStyleToken } from 'themeStyles';
 import useIsMobile from 'utils/isMobile';
 import { useAuth } from 'contexts/AuthContext';
@@ -21,6 +22,7 @@ function MudrasPage() {
   const { isAuthenticated } = useAuth();
   const styleToken = useStyleToken();
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
 
   const headingStyle = isMobile ? styleToken.culture.cultureSectionHeadingTextStyleMobile : styleToken.culture.cultureSectionHeadingTextStyle;
   const contentStyle = isMobile ? styleToken.culture.cultureSectionContentTextStyleMobile : styleToken.culture.cultureSectionContentTextStyle;
@@ -108,7 +110,20 @@ function MudrasPage() {
             <li>Mudras in different classical dance forms</li>
             <li>How to perform specific mudras</li>
           </ul>
-          <Flex gap="large" style={{ margin: '1.5rem 0rem' }}>
+          <Flex gap="large" wrap="wrap" style={{ margin: '1.5rem 0rem' }}>
+            <Button 
+              type="primary"
+              icon={<CameraOutlined />}
+              onClick={() => navigate('/learn/mudras/practice')}
+              style={{ 
+                backgroundColor: '#10B981',
+                borderColor: '#10B981',
+                height: '40px',
+                fontSize: '16px'
+              }}
+            >
+              Practice Mudras (3D AI Vision Coach)
+            </Button>
             <Button 
               type="primary"
               icon={<MessageOutlined />}

@@ -20,6 +20,8 @@ export default ({ mode }: { mode: string }) => {
         pages: path.resolve(__dirname, 'src/pages'),
         types: path.resolve(__dirname, 'src/types'),
         utils: path.resolve(__dirname, 'src/utils'),
+        data: path.resolve(__dirname, 'src/data'),
+        services: path.resolve(__dirname, 'src/services'),
         themeStyles: path.resolve(__dirname, 'src/themeStyles')  // Add the alias for themeStyles
       },
     },

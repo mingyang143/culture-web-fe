@@ -10,6 +10,8 @@
       "pages/*": ["src/pages/*"],
       "types/*": ["src/types/*"],
       "utils/*": ["src/utils/*"],
+      "data/*": ["src/data/*"],
+      "services/*": ["src/services/*"],
       "themeStyles": ["src/themeStyles"]
     },
     "target": "es5",

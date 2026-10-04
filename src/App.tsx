@@ -10,6 +10,7 @@ import SignInPage from 'pages/SignInPage';
 import SignUpPage from 'pages/SignUpPage';
 import ResetPasswordPage from 'pages/ResetPasswordPage';
 import MudrasPage from 'pages/MudrasPage';
+import MudraPracticePage from 'pages/MudraPractice';
 import AdminPage from 'pages/AdminPage';
 import ProtectedRoute from 'components/Common/ProtectedRoute';
 import OrnamentsPage from 'pages/OrnamentsPage';
@@ -46,6 +47,8 @@ function App() {
                 <Route path="/sign-up" element={<SignUpPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
                 <Route path="/learn" element={<MudrasPage />} />
+                <Route path="/learn/mudras/practice" element={<MudraPracticePage />} />
+                <Route path="/learn/mudras/practice/:mudraId" element={<MudraPracticePage />} />
                 <Route path="/admin-login" element={<Navigate to="/sign-in" replace />} />
                 <Route 
                   path="/k-manage-portal" 
