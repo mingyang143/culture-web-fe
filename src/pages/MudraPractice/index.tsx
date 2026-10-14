@@ -39,12 +39,12 @@ type InputMode = 'picture' | 'video' | 'webcam';
 
 const SAMPLE_IMAGE_URLS = [
   {
-    label: 'Sample Hand (Open Palm / Pataka candidate)',
-    url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=700&q=80',
+    label: 'Sample Hand (Open Palm / Pataka)',
+    url: '/samples/pataka_sample.jpg',
   },
   {
     label: 'Sample Mudra Gesture',
-    url: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=700&q=80',
+    url: '/samples/mudra_sample.jpg',
   },
 ];
 
@@ -252,12 +252,12 @@ const MudraPracticePage: React.FC = () => {
     [currentMudra, drawSkeleton]
   );
 
-  // Re-run analysis when mudra changes or image loads
+  // Re-run analysis when mudra changes, image loads, or model finishes loading
   useEffect(() => {
-    if (inputMode === 'picture' && imageRef.current && imageRef.current.complete) {
+    if (inputMode === 'picture' && !isLoadingModel && imageRef.current && imageRef.current.complete) {
       analyzeImage(imageRef.current);
     }
-  }, [selectedMudraId, selectedImageUrl, inputMode, analyzeImage]);
+  }, [selectedMudraId, selectedImageUrl, inputMode, isLoadingModel, analyzeImage]);
 
   // Video frame loop
   const processVideoFrame = useCallback(() => {
