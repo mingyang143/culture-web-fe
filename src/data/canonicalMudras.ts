@@ -175,6 +175,124 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       },
     ],
   },
+
+  katakamukha: {
+    id: 'katakamukha',
+    name: 'Katakamukha',
+    malayalamName: 'കടകാമുഖം',
+    type: 'Asamyuta',
+    description: 'The opening of a bracelet. The thumb, index finger, and middle finger join at their tips, while the ring finger and pinky are held upright and straight.',
+    symbolism: ['Picking flowers', 'Wearing a necklace', 'Holding a mirror', 'Arrow', 'Spear'],
+    referenceImageUrl: '/samples/mudra_sample.jpg',
+    targets: {
+      thumb: {
+        mcp: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.2 },
+        pip: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.2 },
+      },
+      index: {
+        mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
+        pip: { targetDegrees: 65, toleranceDegrees: 20, weight: 1.5 },
+      },
+      middle: {
+        mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
+        pip: { targetDegrees: 65, toleranceDegrees: 20, weight: 1.5 },
+      },
+      ring: {
+        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
+        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+      },
+      pinky: {
+        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
+        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+      },
+    },
+    pedagogicalRules: [
+      {
+        jointKey: 'index.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Bend your index finger inward to touch your thumb tip.',
+      },
+      {
+        jointKey: 'middle.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Bend your middle finger inward to join your index and thumb tips.',
+      },
+      {
+        jointKey: 'ring.pip',
+        condition: 'TOO_BENT',
+        directive: 'Extend your ring finger straight upward.',
+      },
+      {
+        jointKey: 'pinky.pip',
+        condition: 'TOO_BENT',
+        directive: 'Keep your pinky straight upright.',
+      },
+      {
+        jointKey: 'thumb.mcp',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Bring your thumb tip toward your index and middle fingertips.',
+      },
+    ],
+  },
+
+  musti: {
+    id: 'musti',
+    name: 'Musti',
+    malayalamName: 'മുഷ്ടി',
+    type: 'Asamyuta',
+    description: 'The Fist gesture. All four fingers are curled tightly into the palm, with the thumb wrapped firmly over the middle joints of the fingers.',
+    symbolism: ['Steadiness', 'Holding hair', 'Grasping weapons', 'Wrestling', 'Strength'],
+    referenceImageUrl: '/samples/pataka_sample.jpg',
+    targets: {
+      thumb: {
+        mcp: { targetDegrees: 55, toleranceDegrees: 25, weight: 1.3 },
+        pip: { targetDegrees: 60, toleranceDegrees: 25, weight: 1.3 },
+      },
+      index: {
+        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+      },
+      middle: {
+        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+      },
+      ring: {
+        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+      },
+      pinky: {
+        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+      },
+    },
+    pedagogicalRules: [
+      {
+        jointKey: 'index.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Curl your index finger tightly into your palm.',
+      },
+      {
+        jointKey: 'middle.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Curl your middle finger into your palm.',
+      },
+      {
+        jointKey: 'ring.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Curl your ring finger tightly into your palm.',
+      },
+      {
+        jointKey: 'pinky.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Curl your pinky tightly into your palm.',
+      },
+      {
+        jointKey: 'thumb.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Wrap your thumb firmly over your bent fingers.',
+      },
+    ],
+  },
 };
 
 export const DEFAULT_MUDRA_ID = 'pataka';
