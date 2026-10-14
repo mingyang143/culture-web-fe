@@ -78,8 +78,8 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     referenceImageUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80',
     targets: {
       thumb: {
-        mcp: { targetDegrees: 40, toleranceDegrees: 20, weight: 1.3 },
-        pip: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.3 },
+        mcp: { targetDegrees: 15, toleranceDegrees: 25, weight: 1.0 },
+        pip: { targetDegrees: 35, toleranceDegrees: 25, weight: 1.2 },
       },
       index: {
         mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
@@ -186,8 +186,8 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     referenceImageUrl: '/samples/mudra_sample.jpg',
     targets: {
       thumb: {
-        mcp: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.2 },
-        pip: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.2 },
+        mcp: { targetDegrees: 20, toleranceDegrees: 25, weight: 1.0 },
+        pip: { targetDegrees: 40, toleranceDegrees: 25, weight: 1.2 },
       },
       index: {
         mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },

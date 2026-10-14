@@ -43,8 +43,18 @@ export function evaluateMudraKinematics(
       status,
     });
 
-    // Normalized squared penalty
-    const ratio = absDelta / tol;
+    // Deadband-aware normalized squared penalty
+    let ratio = 0;
+    if (absDelta > tol) {
+      // Exceeded tolerance: quadratic penalty starting from 1.0
+      const excess = (absDelta - tol) / tol;
+      ratio = 1.0 + excess;
+    } else {
+      // Within tolerance (Green zone): mild linear ramp (0.0 to 0.35)
+      // so being within tolerance guarantees a high score (88% - 100%)
+      ratio = (absDelta / tol) * 0.35;
+    }
+
     totalWeightedPenalty += target.weight * Math.min(ratio * ratio, 9.0);
     totalWeight += target.weight;
   };
