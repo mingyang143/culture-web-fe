@@ -68,6 +68,8 @@ const MudraPracticePage: React.FC = () => {
   const animationFrameIdRef = useRef<number | null>(null);
 
   const currentMudra = CANONICAL_MUDRAS[selectedMudraId] || CANONICAL_MUDRAS[DEFAULT_MUDRA_ID];
+  const currentMudraRef = useRef<CanonicalMudra>(currentMudra);
+  currentMudraRef.current = currentMudra;
 
   // Initialize MediaPipe model
   useEffect(() => {
@@ -121,33 +123,40 @@ const MudraPracticePage: React.FC = () => {
       // Determine global joint status map if evaluation result exists
       const jointStatusMap: Record<number, 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT'> = {};
       if (evalRes) {
+        const rank = (s: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT') =>
+          s === 'INCORRECT' ? 3 : s === 'MINOR_DEVIATION' ? 2 : 1;
+
+        const setStatus = (indices: number[], status: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT') => {
+          indices.forEach((idx) => {
+            const current = jointStatusMap[idx] || 'CORRECT';
+            if (rank(status) > rank(current)) {
+              jointStatusMap[idx] = status;
+            }
+          });
+        };
+
         evalRes.jointEvaluations.forEach((je) => {
-          let status = je.status;
-          if (je.jointKey.startsWith('thumb')) {
-            jointStatusMap[1] = status;
-            jointStatusMap[2] = status;
-            jointStatusMap[3] = status;
-            jointStatusMap[4] = status;
-          } else if (je.jointKey.startsWith('index')) {
-            jointStatusMap[5] = status;
-            jointStatusMap[6] = status;
-            jointStatusMap[7] = status;
-            jointStatusMap[8] = status;
-          } else if (je.jointKey.startsWith('middle')) {
-            jointStatusMap[9] = status;
-            jointStatusMap[10] = status;
-            jointStatusMap[11] = status;
-            jointStatusMap[12] = status;
-          } else if (je.jointKey.startsWith('ring')) {
-            jointStatusMap[13] = status;
-            jointStatusMap[14] = status;
-            jointStatusMap[15] = status;
-            jointStatusMap[16] = status;
-          } else if (je.jointKey.startsWith('pinky')) {
-            jointStatusMap[17] = status;
-            jointStatusMap[18] = status;
-            jointStatusMap[19] = status;
-            jointStatusMap[20] = status;
+          const status = je.status;
+          if (je.jointKey === 'thumb.mcp') {
+            setStatus([1, 2, 3], status);
+          } else if (je.jointKey === 'thumb.pip') {
+            setStatus([3, 4], status);
+          } else if (je.jointKey === 'index.mcp') {
+            setStatus([5, 6], status);
+          } else if (je.jointKey === 'index.pip') {
+            setStatus([6, 7, 8], status);
+          } else if (je.jointKey === 'middle.mcp') {
+            setStatus([9, 10], status);
+          } else if (je.jointKey === 'middle.pip') {
+            setStatus([10, 11, 12], status);
+          } else if (je.jointKey === 'ring.mcp') {
+            setStatus([13, 14], status);
+          } else if (je.jointKey === 'ring.pip') {
+            setStatus([14, 15, 16], status);
+          } else if (je.jointKey === 'pinky.mcp') {
+            setStatus([17, 18], status);
+          } else if (je.jointKey === 'pinky.pip') {
+            setStatus([18, 19, 20], status);
           }
         });
       }
@@ -232,7 +241,7 @@ const MudraPracticePage: React.FC = () => {
           // Extract kinematics
           const kinematics = extractHandKinematics(firstHandLandmarks, 'Right');
           // Evaluate against current mudra
-          const evalRes = evaluateMudraKinematics(kinematics, currentMudra);
+          const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
           setEvaluationResult(evalRes);
 
           // Render skeleton
@@ -283,7 +292,7 @@ const MudraPracticePage: React.FC = () => {
           setDetectedLandmarks(firstHand);
 
           const kinematics = extractHandKinematics(firstHand, 'Right');
-          const evalRes = evaluateMudraKinematics(kinematics, currentMudra);
+          const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
           setEvaluationResult(evalRes);
 
           drawSkeleton(ctx, firstHand, canvas.width, canvas.height, evalRes);
@@ -294,7 +303,7 @@ const MudraPracticePage: React.FC = () => {
     })();
 
     animationFrameIdRef.current = requestAnimationFrame(processVideoFrame);
-  }, [currentMudra, drawSkeleton]);
+  }, [drawSkeleton]);
 
   // Start webcam
   const startWebcam = async () => {
