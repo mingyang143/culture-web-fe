@@ -167,6 +167,14 @@ export function extractHandKinematics(
   const rawNormal = crossProduct(vLong, vLat);
   const palmNormal = normalizeVector(rawNormal);
 
+  // Inter-fingertip normalized Euclidean distances (Landmark 4 = thumb tip, 8 = index tip, 12 = middle, 16 = ring, 20 = pinky)
+  const tipDistances = {
+    thumbIndex: euclideanDistance3D(norm[4], norm[8]),
+    thumbMiddle: euclideanDistance3D(norm[4], norm[12]),
+    thumbRing: euclideanDistance3D(norm[4], norm[16]),
+    thumbPinky: euclideanDistance3D(norm[4], norm[20]),
+  };
+
   return {
     handedness,
     thumb: { mcp: thumbMcpAngle, pip: thumbPipAngle },
@@ -178,6 +186,7 @@ export function extractHandKinematics(
     spreadIndexMiddle,
     spreadMiddleRing,
     spreadRingPinky,
+    tipDistances,
     palmNormal,
   };
 }

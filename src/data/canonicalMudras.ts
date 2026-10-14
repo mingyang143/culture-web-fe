@@ -76,6 +76,14 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     description: 'The tip of the thumb joins the tip of the index finger to form a ring (circle). The middle, ring, and pinky fingers are kept extended straight.',
     symbolism: ['Growth', 'Movement', 'Desire', 'Remembering', 'Knowledge'],
     referenceImageUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80',
+    requiredContacts: [
+      {
+        pair: 'thumbIndex',
+        label: 'Thumb-Index Contact',
+        maxDistance: 0.35,
+        directive: 'Touch the tip of your thumb to the tip of your index finger to form a closed ring.',
+      },
+    ],
     targets: {
       thumb: {
         mcp: { targetDegrees: 15, toleranceDegrees: 25, weight: 1.0 },
@@ -184,6 +192,20 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     description: 'The opening of a bracelet. The thumb, index finger, and middle finger join at their tips, while the ring finger and pinky are held upright and straight.',
     symbolism: ['Picking flowers', 'Wearing a necklace', 'Holding a mirror', 'Arrow', 'Spear'],
     referenceImageUrl: '/samples/mudra_sample.jpg',
+    requiredContacts: [
+      {
+        pair: 'thumbIndex',
+        label: 'Thumb-Index Contact',
+        maxDistance: 0.35,
+        directive: 'Bring your thumb and index fingertips together.',
+      },
+      {
+        pair: 'thumbMiddle',
+        label: 'Thumb-Middle Contact',
+        maxDistance: 0.35,
+        directive: 'Bring your middle fingertip to join the thumb and index fingertips.',
+      },
+    ],
     targets: {
       thumb: {
         mcp: { targetDegrees: 20, toleranceDegrees: 25, weight: 1.0 },

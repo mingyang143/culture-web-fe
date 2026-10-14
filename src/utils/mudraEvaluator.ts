@@ -91,11 +91,58 @@ export function evaluateMudraKinematics(
     );
   }
 
+  // Evaluate Physical Fingertip Contact Constraints (e.g. thumb and index pinch)
+  let contactFailed = false;
+  let topContactDirective = '';
+
+  if (targetMudra.requiredContacts && kinematics.tipDistances) {
+    targetMudra.requiredContacts.forEach((contact) => {
+      const actualDist = kinematics.tipDistances[contact.pair];
+      const maxAllowed = contact.maxDistance;
+      const isTouching = actualDist <= maxAllowed;
+      const delta = actualDist - maxAllowed;
+
+      let status: JointEvaluation['status'] = 'CORRECT';
+      if (actualDist > maxAllowed * 1.5) {
+        status = 'INCORRECT';
+      } else if (!isTouching) {
+        status = 'MINOR_DEVIATION';
+      }
+
+      evaluations.push({
+        jointKey: `contact.${contact.pair}`,
+        label: contact.label,
+        currentDegrees: Math.round(actualDist * 100),
+        targetDegrees: Math.round(maxAllowed * 100),
+        deltaDegrees: Math.round(delta * 100),
+        status,
+      });
+
+      if (!isTouching) {
+        contactFailed = true;
+        // Severe penalty for breaking required physical contact
+        const excess = (actualDist - maxAllowed) / maxAllowed;
+        const ratio = 1.5 + excess * 2.0;
+        totalWeightedPenalty += 4.0 * (ratio * ratio);
+        totalWeight += 4.0;
+
+        if (!topContactDirective) {
+          topContactDirective = contact.directive;
+        }
+      }
+    });
+  }
+
   // Calculate exponential decaying score
   const avgPenalty = totalWeight > 0 ? totalWeightedPenalty / totalWeight : 0;
   // avgPenalty = 1 means average error equals the tolerance threshold
   const rawScore = Math.exp(-0.5 * avgPenalty) * 100;
-  const matchScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+  let matchScore = Math.max(0, Math.min(100, Math.round(rawScore)));
+
+  // If a defining physical contact is failed, cap the score below the mastery threshold (max 65%)
+  if (contactFailed) {
+    matchScore = Math.min(matchScore, 65);
+  }
 
   // Identify top discrepancy to form pedagogical advice
   const incorrectJoints = evaluations
@@ -132,11 +179,17 @@ export function evaluateMudraKinematics(
     }
   }
 
+  // If a physical contact failed, make that the primary guidance!
+  if (contactFailed && topContactDirective) {
+    secondaryDirective = primaryDirective !== topContactDirective ? primaryDirective : undefined;
+    primaryDirective = topContactDirective;
+  }
+
   return {
     mudraId: targetMudra.id,
     mudraName: targetMudra.name,
     matchScore,
-    isMastered: matchScore >= 85,
+    isMastered: matchScore >= 85 && !contactFailed,
     primaryDirective,
     secondaryDirective,
     jointEvaluations: evaluations,

@@ -157,6 +157,10 @@ const MudraPracticePage: React.FC = () => {
             setStatus([17, 18], status);
           } else if (je.jointKey === 'pinky.pip') {
             setStatus([18, 19, 20], status);
+          } else if (je.jointKey === 'contact.thumbIndex') {
+            setStatus([4, 8], status);
+          } else if (je.jointKey === 'contact.thumbMiddle') {
+            setStatus([4, 12], status);
           }
         });
       }
@@ -190,6 +194,26 @@ const MudraPracticePage: React.FC = () => {
         ctx.stroke();
       });
 
+      // Draw dashed connector for required fingertip pinch contacts if broken
+      if (evalRes) {
+        const thumbIndexContact = evalRes.jointEvaluations.find((je) => je.jointKey === 'contact.thumbIndex');
+        if (thumbIndexContact && thumbIndexContact.status !== 'CORRECT') {
+          const p4 = landmarks[4];
+          const p8 = landmarks[8];
+          if (p4 && p8) {
+            ctx.save();
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = thumbIndexContact.status === 'INCORRECT' ? '#EF4444' : '#F59E0B';
+            ctx.beginPath();
+            ctx.moveTo(p4.x * width, p4.y * height);
+            ctx.lineTo(p8.x * width, p8.y * height);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+      }
+
       // Draw landmark nodes
       landmarks.forEach((p, idx) => {
         const x = p.x * width;
@@ -197,7 +221,9 @@ const MudraPracticePage: React.FC = () => {
         const status = jointStatusMap[idx] || 'CORRECT';
 
         ctx.beginPath();
-        ctx.arc(x, y, 5, 0, 2 * Math.PI);
+        // Give fingertips extra emphasis
+        const radius = [4, 8, 12, 16, 20].includes(idx) ? 6 : 4.5;
+        ctx.arc(x, y, radius, 0, 2 * Math.PI);
 
         if (status === 'INCORRECT') {
           ctx.fillStyle = '#EF4444';

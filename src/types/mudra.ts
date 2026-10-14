@@ -33,8 +33,23 @@ export interface HandKinematics {
   spreadMiddleRing: number;
   spreadRingPinky: number;
 
+  // Normalized Euclidean distance between fingertips relative to palm scale (wrist to middle MCP = 1.0)
+  tipDistances: {
+    thumbIndex: number;
+    thumbMiddle: number;
+    thumbRing: number;
+    thumbPinky: number;
+  };
+
   // Palm orientation normal vector
   palmNormal: Landmark3D;
+}
+
+export interface RequiredFingertipContact {
+  pair: 'thumbIndex' | 'thumbMiddle' | 'thumbRing' | 'thumbPinky';
+  label: string;
+  maxDistance: number; // e.g. 0.35 in palm normalized scale
+  directive: string;
 }
 
 export interface JointTolerance {
@@ -52,6 +67,9 @@ export interface CanonicalMudra {
   symbolism: string[];
   referenceImageUrl: string;
   
+  // Physical fingertip contact constraints (e.g. thumb and index touching for Mudrakhya)
+  requiredContacts?: RequiredFingertipContact[];
+
   // Target joint kinematics
   targets: {
     thumb: {
