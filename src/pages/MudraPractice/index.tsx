@@ -25,6 +25,7 @@ import {
   ExclamationCircleOutlined,
   BulbOutlined,
 } from '@ant-design/icons';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useStyleToken } from 'themeStyles';
 import useIsMobile from 'utils/isMobile';
 import { CANONICAL_MUDRAS, DEFAULT_MUDRA_ID } from 'data/canonicalMudras';
@@ -59,8 +60,21 @@ const getScoreStatus = (
 const MudraPracticePage: React.FC = () => {
   const isMobile = useIsMobile();
   const styleToken = useStyleToken();
+  const { mudraId } = useParams<{ mudraId?: string }>();
+  const navigate = useNavigate();
 
-  const [selectedMudraId, setSelectedMudraId] = useState<string>(DEFAULT_MUDRA_ID);
+  const [selectedMudraId, setSelectedMudraId] = useState<string>(() => {
+    if (mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]) {
+      return mudraId.toLowerCase();
+    }
+    return DEFAULT_MUDRA_ID;
+  });
+
+  useEffect(() => {
+    if (mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]) {
+      setSelectedMudraId(mudraId.toLowerCase());
+    }
+  }, [mudraId]);
   const [inputMode, setInputMode] = useState<InputMode>('picture');
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -434,7 +448,10 @@ const MudraPracticePage: React.FC = () => {
           <Select
             value={selectedMudraId}
             style={{ width: 220 }}
-            onChange={(val) => setSelectedMudraId(val)}
+            onChange={(val) => {
+              setSelectedMudraId(val);
+              navigate(`/learn/mudras/practice/${val}`, { replace: true });
+            }}
             options={Object.values(CANONICAL_MUDRAS).map((m) => ({
               label: `${m.name} (${m.malayalamName})`,
               value: m.id,
