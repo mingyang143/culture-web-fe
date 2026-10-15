@@ -185,13 +185,22 @@ export function evaluateMudraKinematics(
     primaryDirective = topContactDirective;
   }
 
+  const hasSevereDiscrepancy = evaluations.some((e) => e.status === 'INCORRECT');
+  const isMastered = matchScore >= 88 && !contactFailed && !hasSevereDiscrepancy;
+
+  if (isMastered) {
+    primaryDirective = 'Flawless Form! Position holds true to canonical Kathakali technique.';
+  }
+
   return {
     mudraId: targetMudra.id,
     mudraName: targetMudra.name,
     matchScore,
-    isMastered: matchScore >= 85 && !contactFailed,
+    isMastered,
     primaryDirective,
     secondaryDirective,
     jointEvaluations: evaluations,
   };
 }
+
+export default evaluateMudraKinematics;

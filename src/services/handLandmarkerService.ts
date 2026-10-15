@@ -4,11 +4,13 @@ import {
   HandLandmarkerResult,
 } from '@mediapipe/tasks-vision';
 
-export const HAND_CONNECTIONS = HandLandmarker.HAND_CONNECTIONS;
+export const {HAND_CONNECTIONS} = HandLandmarker;
 
 class HandLandmarkerService {
   private handLandmarker: HandLandmarker | null = null;
+
   private isInitializing = false;
+
   private currentRunningMode: 'IMAGE' | 'VIDEO' = 'IMAGE';
 
   /**

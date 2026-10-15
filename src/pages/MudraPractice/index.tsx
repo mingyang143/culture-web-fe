@@ -31,7 +31,7 @@ import { CANONICAL_MUDRAS, DEFAULT_MUDRA_ID } from 'data/canonicalMudras';
 import { extractHandKinematics } from 'utils/mudraKinematics';
 import { evaluateMudraKinematics } from 'utils/mudraEvaluator';
 import { handLandmarkerService, HAND_CONNECTIONS } from 'services/handLandmarkerService';
-import { MudraEvaluationResult, Landmark3D, JointEvaluation } from 'types/mudra';
+import { MudraEvaluationResult, Landmark3D, JointEvaluation, CanonicalMudra } from 'types/mudra';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -48,6 +48,14 @@ const SAMPLE_IMAGE_URLS = [
   },
 ];
 
+const getScoreStatus = (
+  result: MudraEvaluationResult | null
+): 'success' | 'normal' | 'exception' => {
+  if (result?.isMastered) return 'success';
+  if ((result?.matchScore || 0) > 60) return 'normal';
+  return 'exception';
+};
+
 const MudraPracticePage: React.FC = () => {
   const isMobile = useIsMobile();
   const styleToken = useStyleToken();
@@ -58,7 +66,6 @@ const MudraPracticePage: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string>(SAMPLE_IMAGE_URLS[0].url);
   const [evaluationResult, setEvaluationResult] = useState<MudraEvaluationResult | null>(null);
-  const [detectedLandmarks, setDetectedLandmarks] = useState<Landmark3D[] | null>(null);
   const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -70,6 +77,18 @@ const MudraPracticePage: React.FC = () => {
   const currentMudra = CANONICAL_MUDRAS[selectedMudraId] || CANONICAL_MUDRAS[DEFAULT_MUDRA_ID];
   const currentMudraRef = useRef<CanonicalMudra>(currentMudra);
   currentMudraRef.current = currentMudra;
+
+  const stopWebcam = useCallback(() => {
+    if (animationFrameIdRef.current) {
+      cancelAnimationFrame(animationFrameIdRef.current);
+      animationFrameIdRef.current = null;
+    }
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach((track) => track.stop());
+      webcamStreamRef.current = null;
+    }
+    setIsWebcamActive(false);
+  }, []);
 
   // Initialize MediaPipe model
   useEffect(() => {
@@ -95,19 +114,7 @@ const MudraPracticePage: React.FC = () => {
       isMounted = false;
       stopWebcam();
     };
-  }, []);
-
-  const stopWebcam = useCallback(() => {
-    if (animationFrameIdRef.current) {
-      cancelAnimationFrame(animationFrameIdRef.current);
-      animationFrameIdRef.current = null;
-    }
-    if (webcamStreamRef.current) {
-      webcamStreamRef.current.getTracks().forEach((track) => track.stop());
-      webcamStreamRef.current = null;
-    }
-    setIsWebcamActive(false);
-  }, []);
+  }, [stopWebcam]);
 
   // Draw 21 landmarks and skeletal bones onto canvas
   const drawSkeleton = useCallback(
@@ -123,8 +130,11 @@ const MudraPracticePage: React.FC = () => {
       // Determine global joint status map if evaluation result exists
       const jointStatusMap: Record<number, 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT'> = {};
       if (evalRes) {
-        const rank = (s: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT') =>
-          s === 'INCORRECT' ? 3 : s === 'MINOR_DEVIATION' ? 2 : 1;
+        const rank = (s: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT') => {
+          if (s === 'INCORRECT') return 3;
+          if (s === 'MINOR_DEVIATION') return 2;
+          return 1;
+        };
 
         const setStatus = (indices: number[], status: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT') => {
           indices.forEach((idx) => {
@@ -136,7 +146,7 @@ const MudraPracticePage: React.FC = () => {
         };
 
         evalRes.jointEvaluations.forEach((je) => {
-          const status = je.status;
+          const {status} = je;
           if (je.jointKey === 'thumb.mcp') {
             setStatus([1, 2, 3], status);
           } else if (je.jointKey === 'thumb.pip') {
@@ -262,7 +272,6 @@ const MudraPracticePage: React.FC = () => {
 
         if (result.landmarks && result.landmarks.length > 0) {
           const firstHandLandmarks = result.landmarks[0];
-          setDetectedLandmarks(firstHandLandmarks);
 
           // Extract kinematics
           const kinematics = extractHandKinematics(firstHandLandmarks, 'Right');
@@ -273,7 +282,6 @@ const MudraPracticePage: React.FC = () => {
           // Render skeleton
           drawSkeleton(ctx, firstHandLandmarks, canvas.width, canvas.height, evalRes);
         } else {
-          setDetectedLandmarks(null);
           setEvaluationResult(null);
           message.warning('No hand detected in the image. Try a clearer hand photo.');
         }
@@ -284,7 +292,7 @@ const MudraPracticePage: React.FC = () => {
         setIsProcessing(false);
       }
     },
-    [currentMudra, drawSkeleton]
+    [drawSkeleton]
   );
 
   // Re-run analysis when mudra changes, image loads, or model finishes loading
@@ -315,7 +323,6 @@ const MudraPracticePage: React.FC = () => {
         const result = await handLandmarkerService.detectVideoFrame(video, performance.now());
         if (result.landmarks && result.landmarks.length > 0) {
           const firstHand = result.landmarks[0];
-          setDetectedLandmarks(firstHand);
 
           const kinematics = extractHandKinematics(firstHand, 'Right');
           const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
@@ -323,7 +330,7 @@ const MudraPracticePage: React.FC = () => {
 
           drawSkeleton(ctx, firstHand, canvas.width, canvas.height, evalRes);
         }
-      } catch (e) {
+      } catch {
         // frame skip
       }
     })();
@@ -357,7 +364,6 @@ const MudraPracticePage: React.FC = () => {
     stopWebcam();
     setInputMode(mode);
     setEvaluationResult(null);
-    setDetectedLandmarks(null);
 
     if (mode === 'picture') {
       setTimeout(() => {
@@ -608,13 +614,7 @@ const MudraPracticePage: React.FC = () => {
               <Progress
                 type="circle"
                 percent={evaluationResult?.matchScore || 0}
-                status={
-                  evaluationResult?.isMastered
-                    ? 'success'
-                    : (evaluationResult?.matchScore || 0) > 60
-                    ? 'normal'
-                    : 'exception'
-                }
+                status={getScoreStatus(evaluationResult)}
                 format={(percent) => `${percent}%`}
               />
 
