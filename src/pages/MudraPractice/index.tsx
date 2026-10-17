@@ -24,6 +24,8 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   BulbOutlined,
+  TrophyOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStyleToken } from 'themeStyles';
@@ -38,6 +40,8 @@ const { Title, Text, Paragraph } = Typography;
 
 type InputMode = 'picture' | 'video' | 'webcam';
 
+const HOLD_DURATION_MS = 2000; // 2.0-second continuous hold requirement
+
 const SAMPLE_IMAGE_URLS = [
   {
     label: 'Sample Hand (Open Palm / Pataka)',
@@ -50,9 +54,10 @@ const SAMPLE_IMAGE_URLS = [
 ];
 
 const getScoreStatus = (
-  result: MudraEvaluationResult | null
+  result: MudraEvaluationResult | null,
+  isHoldMastered: boolean
 ): 'success' | 'normal' | 'exception' => {
-  if (result?.isMastered) return 'success';
+  if (isHoldMastered || result?.isMastered) return 'success';
   if ((result?.matchScore || 0) > 60) return 'normal';
   return 'exception';
 };
@@ -75,12 +80,20 @@ const MudraPracticePage: React.FC = () => {
       setSelectedMudraId(mudraId.toLowerCase());
     }
   }, [mudraId]);
+
   const [inputMode, setInputMode] = useState<InputMode>('picture');
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string>(SAMPLE_IMAGE_URLS[0].url);
   const [evaluationResult, setEvaluationResult] = useState<MudraEvaluationResult | null>(null);
   const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
+
+  // 2.0-second continuous hold timer state & refs
+  const [holdProgressMs, setHoldProgressMs] = useState<number>(0);
+  const [isHoldMastered, setIsHoldMastered] = useState<boolean>(false);
+  const holdElapsedMsRef = useRef<number>(0);
+  const lastFrameTimeRef = useRef<number | null>(null);
+  const masteredLockedRef = useRef<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -91,6 +104,14 @@ const MudraPracticePage: React.FC = () => {
   const currentMudra = CANONICAL_MUDRAS[selectedMudraId] || CANONICAL_MUDRAS[DEFAULT_MUDRA_ID];
   const currentMudraRef = useRef<CanonicalMudra>(currentMudra);
   currentMudraRef.current = currentMudra;
+
+  const resetHoldTimer = useCallback(() => {
+    holdElapsedMsRef.current = 0;
+    lastFrameTimeRef.current = null;
+    masteredLockedRef.current = false;
+    setHoldProgressMs(0);
+    setIsHoldMastered(false);
+  }, []);
 
   const stopWebcam = useCallback(() => {
     if (animationFrameIdRef.current) {
@@ -103,6 +124,11 @@ const MudraPracticePage: React.FC = () => {
     }
     setIsWebcamActive(false);
   }, []);
+
+  // Reset hold timer when switching mudras
+  useEffect(() => {
+    resetHoldTimer();
+  }, [selectedMudraId, resetHoldTimer]);
 
   // Initialize MediaPipe model
   useEffect(() => {
@@ -160,7 +186,7 @@ const MudraPracticePage: React.FC = () => {
         };
 
         evalRes.jointEvaluations.forEach((je) => {
-          const {status} = je;
+          const { status } = je;
           if (je.jointKey === 'thumb.mcp') {
             setStatus([1, 2, 3], status);
           } else if (je.jointKey === 'thumb.pip') {
@@ -220,22 +246,31 @@ const MudraPracticePage: React.FC = () => {
 
       // Draw dashed connector for required fingertip pinch contacts if broken
       if (evalRes) {
-        const thumbIndexContact = evalRes.jointEvaluations.find((je) => je.jointKey === 'contact.thumbIndex');
-        if (thumbIndexContact && thumbIndexContact.status !== 'CORRECT') {
-          const p4 = landmarks[4];
-          const p8 = landmarks[8];
-          if (p4 && p8) {
-            ctx.save();
-            ctx.setLineDash([5, 5]);
-            ctx.lineWidth = 2.5;
-            ctx.strokeStyle = thumbIndexContact.status === 'INCORRECT' ? '#EF4444' : '#F59E0B';
-            ctx.beginPath();
-            ctx.moveTo(p4.x * width, p4.y * height);
-            ctx.lineTo(p8.x * width, p8.y * height);
-            ctx.stroke();
-            ctx.restore();
+        const contactPairs: Array<{ key: string; idxA: number; idxB: number }> = [
+          { key: 'contact.thumbIndex', idxA: 4, idxB: 8 },
+          { key: 'contact.thumbMiddle', idxA: 4, idxB: 12 },
+          { key: 'contact.thumbRing', idxA: 4, idxB: 16 },
+          { key: 'contact.thumbPinky', idxA: 4, idxB: 20 },
+        ];
+
+        contactPairs.forEach(({ key, idxA, idxB }) => {
+          const contactEval = evalRes.jointEvaluations.find((je) => je.jointKey === key);
+          if (contactEval && contactEval.status !== 'CORRECT') {
+            const pA = landmarks[idxA];
+            const pB = landmarks[idxB];
+            if (pA && pB) {
+              ctx.save();
+              ctx.setLineDash([5, 5]);
+              ctx.lineWidth = 2.5;
+              ctx.strokeStyle = contactEval.status === 'INCORRECT' ? '#EF4444' : '#F59E0B';
+              ctx.beginPath();
+              ctx.moveTo(pA.x * width, pA.y * height);
+              ctx.lineTo(pB.x * width, pB.y * height);
+              ctx.stroke();
+              ctx.restore();
+            }
           }
-        }
+        });
       }
 
       // Draw landmark nodes
@@ -293,10 +328,20 @@ const MudraPracticePage: React.FC = () => {
           const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
           setEvaluationResult(evalRes);
 
+          if (evalRes.isMastered) {
+            holdElapsedMsRef.current = HOLD_DURATION_MS;
+            masteredLockedRef.current = true;
+            setHoldProgressMs(HOLD_DURATION_MS);
+            setIsHoldMastered(true);
+          } else {
+            resetHoldTimer();
+          }
+
           // Render skeleton
           drawSkeleton(ctx, firstHandLandmarks, canvas.width, canvas.height, evalRes);
         } else {
           setEvaluationResult(null);
+          resetHoldTimer();
           message.warning('No hand detected in the image. Try a clearer hand photo.');
         }
       } catch (err) {
@@ -306,7 +351,7 @@ const MudraPracticePage: React.FC = () => {
         setIsProcessing(false);
       }
     },
-    [drawSkeleton]
+    [drawSkeleton, resetHoldTimer]
   );
 
   // Re-run analysis when mudra changes, image loads, or model finishes loading
@@ -316,7 +361,7 @@ const MudraPracticePage: React.FC = () => {
     }
   }, [selectedMudraId, selectedImageUrl, inputMode, isLoadingModel, analyzeImage]);
 
-  // Video frame loop
+  // Video frame loop with 2.0-second continuous hold accumulator
   const processVideoFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -332,9 +377,13 @@ const MudraPracticePage: React.FC = () => {
     // Draw video frame
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+    const now = performance.now();
+    const dt = lastFrameTimeRef.current ? Math.min(now - lastFrameTimeRef.current, 200) : 33;
+    lastFrameTimeRef.current = now;
+
     (async () => {
       try {
-        const result = await handLandmarkerService.detectVideoFrame(video, performance.now());
+        const result = await handLandmarkerService.detectVideoFrame(video, now);
         if (result.landmarks && result.landmarks.length > 0) {
           const firstHand = result.landmarks[0];
 
@@ -342,7 +391,33 @@ const MudraPracticePage: React.FC = () => {
           const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
           setEvaluationResult(evalRes);
 
+          // Update 2.0s continuous hold timer if not already locked as mastered
+          if (!masteredLockedRef.current) {
+            if (evalRes.isMastered) {
+              holdElapsedMsRef.current = Math.min(
+                HOLD_DURATION_MS,
+                holdElapsedMsRef.current + dt
+              );
+              if (holdElapsedMsRef.current >= HOLD_DURATION_MS) {
+                masteredLockedRef.current = true;
+                setIsHoldMastered(true);
+                message.success(
+                  `🎉 Mudra Mastered! You held ${currentMudraRef.current.name} steadily for 2.0 seconds!`
+                );
+              }
+            } else if (evalRes.matchScore < 70) {
+              holdElapsedMsRef.current = 0;
+            } else {
+              // Gentle decay on minor single-frame jitter
+              holdElapsedMsRef.current = Math.max(0, holdElapsedMsRef.current - dt * 1.5);
+            }
+            setHoldProgressMs(Math.round(holdElapsedMsRef.current));
+          }
+
           drawSkeleton(ctx, firstHand, canvas.width, canvas.height, evalRes);
+        } else if (!masteredLockedRef.current && holdElapsedMsRef.current > 0) {
+          holdElapsedMsRef.current = Math.max(0, holdElapsedMsRef.current - dt * 2);
+          setHoldProgressMs(Math.round(holdElapsedMsRef.current));
         }
       } catch {
         // frame skip
@@ -356,6 +431,7 @@ const MudraPracticePage: React.FC = () => {
   const startWebcam = async () => {
     try {
       stopWebcam();
+      resetHoldTimer();
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' },
       });
@@ -365,6 +441,7 @@ const MudraPracticePage: React.FC = () => {
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play();
           setIsWebcamActive(true);
+          lastFrameTimeRef.current = performance.now();
           animationFrameIdRef.current = requestAnimationFrame(processVideoFrame);
         };
       }
@@ -376,6 +453,7 @@ const MudraPracticePage: React.FC = () => {
 
   const handleModeChange = (mode: InputMode) => {
     stopWebcam();
+    resetHoldTimer();
     setInputMode(mode);
     setEvaluationResult(null);
 
@@ -385,6 +463,9 @@ const MudraPracticePage: React.FC = () => {
       }, 100);
     }
   };
+
+  const holdPercent = Math.min(100, Math.round((holdProgressMs / HOLD_DURATION_MS) * 100));
+  const holdSecondsText = (holdProgressMs / 1000).toFixed(1);
 
   const jointColumns = [
     {
@@ -429,6 +510,27 @@ const MudraPracticePage: React.FC = () => {
       },
     },
   ];
+
+  let coachAlertMessage = 'Actionable Adjustment';
+  if (isHoldMastered) {
+    coachAlertMessage = 'Mudra Mastered! 2.0-Second Continuous Hold Complete.';
+  } else if (evaluationResult?.isMastered) {
+    coachAlertMessage = 'Great Form! Hold steady for 2.0 seconds to master...';
+  }
+
+  let coachAlertIcon = <BulbOutlined />;
+  if (isHoldMastered) {
+    coachAlertIcon = <TrophyOutlined />;
+  } else if (evaluationResult?.isMastered) {
+    coachAlertIcon = <CheckCircleOutlined />;
+  }
+
+  let holdProgressStatus: 'success' | 'active' | 'normal' = 'normal';
+  if (isHoldMastered) {
+    holdProgressStatus = 'success';
+  } else if (holdPercent > 0) {
+    holdProgressStatus = 'active';
+  }
 
   return (
     <Flex vertical style={{ padding: isMobile ? '1rem' : '2rem', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
@@ -502,13 +604,20 @@ const MudraPracticePage: React.FC = () => {
           )}
 
           {inputMode === 'webcam' && (
-            <Button
-              type={isWebcamActive ? 'default' : 'primary'}
-              danger={isWebcamActive}
-              onClick={isWebcamActive ? stopWebcam : startWebcam}
-            >
-              {isWebcamActive ? 'Stop Webcam' : 'Start Webcam'}
-            </Button>
+            <Space>
+              {isHoldMastered && (
+                <Button icon={<ReloadOutlined />} onClick={resetHoldTimer}>
+                  Reset 2s Hold
+                </Button>
+              )}
+              <Button
+                type={isWebcamActive ? 'default' : 'primary'}
+                danger={isWebcamActive}
+                onClick={isWebcamActive ? stopWebcam : startWebcam}
+              >
+                {isWebcamActive ? 'Stop Webcam' : 'Start Webcam'}
+              </Button>
+            </Space>
           )}
         </Flex>
       </Card>
@@ -566,6 +675,34 @@ const MudraPracticePage: React.FC = () => {
                 }}
               />
 
+              {/* Top-Right Hold Timer HUD Overlay for Video/Webcam */}
+              {(inputMode === 'webcam' || inputMode === 'video') && (holdProgressMs > 0 || isHoldMastered) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 12,
+                    right: 12,
+                    backgroundColor: isHoldMastered ? 'rgba(16, 185, 129, 0.92)' : 'rgba(17, 24, 39, 0.85)',
+                    border: `1px solid ${isHoldMastered ? '#10B981' : '#374151'}`,
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    color: '#fff',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                  }}
+                >
+                  {isHoldMastered ? (
+                    <Space>
+                      <TrophyOutlined style={{ color: '#FBBF24', fontSize: '16px' }} />
+                      <span>Mudra Mastered! (2.0s Hold Verified)</span>
+                    </Space>
+                  ) : (
+                    <span>Hold Steady: {holdSecondsText}s / 2.0s ({holdPercent}%)</span>
+                  )}
+                </div>
+              )}
+
               {/* Skeleton Legend Overlay */}
               <div
                 style={{
@@ -595,11 +732,13 @@ const MudraPracticePage: React.FC = () => {
                 accept="video/mp4,video/webm"
                 showUploadList={false}
                 beforeUpload={(file) => {
+                  resetHoldTimer();
                   const url = URL.createObjectURL(file);
                   if (videoRef.current) {
                     videoRef.current.src = url;
                     videoRef.current.onloadedmetadata = () => {
                       videoRef.current?.play();
+                      lastFrameTimeRef.current = performance.now();
                       animationFrameIdRef.current = requestAnimationFrame(processVideoFrame);
                     };
                   }
@@ -608,6 +747,11 @@ const MudraPracticePage: React.FC = () => {
               >
                 <Button icon={<UploadOutlined />}>Upload MP4 Hand Video</Button>
               </Upload>
+              {isHoldMastered && (
+                <Button icon={<ReloadOutlined />} onClick={resetHoldTimer}>
+                  Reset 2s Hold
+                </Button>
+              )}
             </Flex>
           )}
         </Card>
@@ -619,9 +763,14 @@ const MudraPracticePage: React.FC = () => {
             title={
               <Flex justify="space-between" align="center">
                 <span>AI Coach Feedback</span>
-                {evaluationResult?.isMastered && (
-                  <Tag color="success" icon={<CheckCircleOutlined />}>
-                    Mastered
+                {isHoldMastered && (
+                  <Tag color="success" icon={<TrophyOutlined />}>
+                    Mudra Mastered!
+                  </Tag>
+                )}
+                {!isHoldMastered && evaluationResult?.isMastered && (
+                  <Tag color="processing" icon={<CheckCircleOutlined />}>
+                    Hold Pose (2.0s)...
                   </Tag>
                 )}
               </Flex>
@@ -631,7 +780,7 @@ const MudraPracticePage: React.FC = () => {
               <Progress
                 type="circle"
                 percent={evaluationResult?.matchScore || 0}
-                status={getScoreStatus(evaluationResult)}
+                status={getScoreStatus(evaluationResult, isHoldMastered)}
                 format={(percent) => `${percent}%`}
               />
 
@@ -640,23 +789,39 @@ const MudraPracticePage: React.FC = () => {
                   Target: {currentMudra.name} ({currentMudra.malayalamName})
                 </Text>
                 <Alert
-                  message={
-                    evaluationResult?.isMastered
-                      ? 'Flawless Form! Position holds true to canonical Kathakali technique.'
-                      : 'Actionable Adjustment'
-                  }
+                  message={coachAlertMessage}
                   description={
                     evaluationResult?.primaryDirective ||
                     'Load a photo or start webcam to receive joint-level guidance.'
                   }
-                  type={evaluationResult?.isMastered ? 'success' : 'warning'}
+                  type={isHoldMastered || evaluationResult?.isMastered ? 'success' : 'warning'}
                   showIcon
-                  icon={evaluationResult?.isMastered ? <CheckCircleOutlined /> : <BulbOutlined />}
+                  icon={coachAlertIcon}
                 />
               </div>
             </Flex>
 
-            {evaluationResult?.secondaryDirective && (
+            {/* 2.0-Second Continuous Hold Progress Bar for Video / Webcam */}
+            {(inputMode === 'webcam' || inputMode === 'video') && (
+              <div style={{ marginTop: '16px' }}>
+                <Flex justify="space-between" align="center" style={{ marginBottom: '4px' }}>
+                  <Text type="secondary" style={{ fontSize: '13px' }}>
+                    2.0s Continuous Hold Stability:
+                  </Text>
+                  <Text strong style={{ fontSize: '13px', color: isHoldMastered ? '#10B981' : undefined }}>
+                    {isHoldMastered ? '2.0s / 2.0s (Verified!)' : `${holdSecondsText}s / 2.0s`}
+                  </Text>
+                </Flex>
+                <Progress
+                  percent={holdPercent}
+                  status={holdProgressStatus}
+                  strokeColor={isHoldMastered ? '#10B981' : '#3B82F6'}
+                  showInfo={false}
+                />
+              </div>
+            )}
+
+            {evaluationResult?.secondaryDirective && !isHoldMastered && (
               <Paragraph type="secondary" style={{ marginTop: '12px', marginBottom: 0 }}>
                 <ExclamationCircleOutlined /> Secondary Tip: {evaluationResult.secondaryDirective}
               </Paragraph>
