@@ -4,23 +4,31 @@ export interface Landmark3D {
   z: number;
 }
 
+export type HandednessType = 'Left' | 'Right' | 'Unknown';
+
+export type CoordinateSource = 'worldLandmarks' | 'unavailable';
+
 export interface HandLandmarkResult {
-  landmarks: Landmark3D[]; // 21 landmarks
-  handedness: 'Left' | 'Right';
+  landmarks: Landmark3D[]; // 21 normalized image landmarks (overlay only)
+  worldLandmarks?: Landmark3D[]; // 21 metric 3D world landmarks (geometric assessment)
+  handedness: HandednessType;
   score: number;
 }
 
 export type FingerName = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
 
 export interface FingerJointAngles {
-  mcp: number; // Knuckle / base joint angle in degrees (0 = fully extended/straight, >90 = bent)
-  pip: number; // Middle joint angle in degrees
-  dip?: number; // Outer joint angle in degrees
+  mcp: number; // Knuckle / base joint exterior bend angle in degrees (0 = straight, >90 = bent)
+  pip: number; // Middle joint exterior bend angle in degrees
+  dip?: number; // Outer joint exterior bend angle in degrees
 }
 
 export interface HandKinematics {
-  handedness: 'Left' | 'Right';
-  // Flexion angles (0 = straight, 180 = fully curled)
+  coordinateSource: 'worldLandmarks';
+  handedness: HandednessType;
+  palmScaleMeters: number; // Euclidean distance(0, 9) in world meters
+  palmWidthMeters: number; // Euclidean distance(5, 17) in world meters
+  // Flexion exterior bend angles (0 = straight, 180 = fully folded back)
   thumb: FingerJointAngles;
   index: FingerJointAngles;
   middle: FingerJointAngles;
@@ -33,12 +41,20 @@ export interface HandKinematics {
   spreadMiddleRing: number;
   spreadRingPinky: number;
 
-  // Normalized Euclidean distance between fingertips relative to palm scale (wrist to middle MCP = 1.0)
+  // Normalized Euclidean distance between fingertips relative to palm scale (wrist 0 to middle MCP 9 = 1.0)
   tipDistances: {
     thumbIndex: number;
     thumbMiddle: number;
     thumbRing: number;
     thumbPinky: number;
+  };
+
+  // Normalized tip-to-own-MCP closure distances relative to palm scale (0->9 = 1.0)
+  fingerClosure: {
+    index: number; // distance(8, 5) / palmScale
+    middle: number; // distance(12, 9) / palmScale
+    ring: number; // distance(16, 13) / palmScale
+    pinky: number; // distance(20, 17) / palmScale
   };
 
   // Palm orientation normal vector
@@ -54,7 +70,7 @@ export interface RequiredFingertipContact {
 
 export interface JointTolerance {
   targetDegrees: number;
-  toleranceDegrees: number; // Allowed variation (e.g. ±15°)
+  toleranceDegrees: number; // Allowed variation (e.g. ±15° or ±25°)
   weight: number; // Salience weight in score calculation
 }
 
@@ -66,11 +82,11 @@ export interface CanonicalMudra {
   description: string;
   symbolism: string[];
   referenceImageUrl: string;
-  
+
   // Physical fingertip contact constraints (e.g. thumb and index touching for Mudrakhya)
   requiredContacts?: RequiredFingertipContact[];
 
-  // Target joint kinematics
+  // Target joint kinematics (currently heuristic prototypes pending world-landmark calibration)
   targets: {
     thumb: {
       mcp: JointTolerance;
@@ -108,18 +124,37 @@ export interface CanonicalMudra {
 export interface JointEvaluation {
   jointKey: string;
   label: string;
+  triplet?: string;
+  rawValue?: number;
   currentDegrees: number;
   targetDegrees: number;
+  toleranceDegrees?: number;
+  acceptedRange?: [number, number];
   deltaDegrees: number;
+  weight?: number;
+  weightedPenalty?: number;
   status: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT';
 }
 
 export interface MudraEvaluationResult {
   mudraId: string;
   mudraName: string;
+  measurementStatus?: 'VALID' | 'MEASUREMENT_UNAVAILABLE';
+  coordinateSource?: CoordinateSource;
+  handedness?: HandednessType;
   matchScore: number; // 0 to 100
   isMastered: boolean;
   primaryDirective: string;
   secondaryDirective?: string;
   jointEvaluations: JointEvaluation[];
+  totalWeight?: number;
+  totalWeightedPenalty?: number;
+}
+
+export interface TemporalFeatureStats {
+  sampleCount: number;
+  mean: number;
+  stdDev: number;
+  min: number;
+  max: number;
 }

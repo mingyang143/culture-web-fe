@@ -1,5 +1,12 @@
 import { CanonicalMudra } from 'types/mudra';
 
+/**
+ * NOTE ON PROVENANCE & CALIBRATION STATUS:
+ * All `targetDegrees`, `toleranceDegrees`, and `weight` values in `CANONICAL_MUDRAS`
+ * are currently manually authored heuristic single-prototype approximations (exterior bend
+ * convention: 0° = straight chain, 180° = folded back), NOT empirically calibrated intervals
+ * from expert-validated MediaPipe 3D `worldLandmarks` recordings.
+ */
 export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
   pataka: {
     id: 'pataka',
@@ -257,6 +264,10 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     ],
   },
 
+  // Heuristic baseline: Musti PIP (85° ± 25°) and MCP (75° ± 25°) targets are unvalidated
+  // placeholders and may under-estimate closed-fist exterior bend angles in 3D worldLandmarks.
+  // Replacement with empirically measured ranges / finger-closure thresholds is deferred to a
+  // dedicated calibration step using the Developer Diagnostic View.
   musti: {
     id: 'musti',
     name: 'Musti',

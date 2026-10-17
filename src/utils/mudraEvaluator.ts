@@ -3,20 +3,116 @@ import {
   CanonicalMudra,
   MudraEvaluationResult,
   JointEvaluation,
+  TemporalFeatureStats,
 } from 'types/mudra';
+import { JOINT_TRIPLETS } from 'utils/mudraKinematics';
 
 /**
- * Evaluates student kinematics against a canonical mudra target
+ * Checks whether a pedagogical rule matches the joint key and signed error direction
+ */
+export function matchesPedagogicalRule(
+  rule: CanonicalMudra['pedagogicalRules'][number],
+  evaluation: Pick<JointEvaluation, 'jointKey' | 'deltaDegrees'>
+): boolean {
+  if (rule.jointKey !== evaluation.jointKey) return false;
+  if (rule.condition === 'TOO_BENT' && evaluation.deltaDegrees > 0) return true;
+  if (rule.condition === 'TOO_STRAIGHT' && evaluation.deltaDegrees < 0) return true;
+  if (rule.condition === 'TOO_WIDE' && evaluation.deltaDegrees > 0) return true;
+  if (rule.condition === 'TOO_NARROW' && evaluation.deltaDegrees < 0) return true;
+  return false;
+}
+
+/**
+ * Generates direction-consistent fallback text when no explicit pedagogical rule matches
+ */
+export function formatFallbackDirective(evaluation: JointEvaluation): string {
+  const isSpread = evaluation.jointKey.startsWith('spread');
+  let direction = evaluation.deltaDegrees > 0 ? 'too bent' : 'too straight';
+  if (isSpread) {
+    direction = evaluation.deltaDegrees > 0 ? 'too wide' : 'too narrow';
+  }
+  return `Your ${evaluation.label} is ${direction} by ~${Math.abs(evaluation.deltaDegrees)}°. Adjust to ~${evaluation.targetDegrees}°.`;
+}
+
+/**
+ * Resolves a joint discrepancy into a directive using identical condition-matching logic
+ * for both primary and secondary coaching tips.
+ */
+export function resolveJointDirective(
+  targetMudra: CanonicalMudra,
+  evaluation: JointEvaluation
+): string {
+  const matchingRule = targetMudra.pedagogicalRules.find((rule) =>
+    matchesPedagogicalRule(rule, evaluation)
+  );
+  return matchingRule ? matchingRule.directive : formatFallbackDirective(evaluation);
+}
+
+/**
+ * Computes rolling temporal summary statistics (mean, stdDev, min, max) for a feature series
+ */
+export function computeTemporalFeatureStats(samples: number[]): TemporalFeatureStats {
+  const finiteSamples = samples.filter((val) => Number.isFinite(val));
+  const sampleCount = finiteSamples.length;
+  if (sampleCount === 0) {
+    return { sampleCount: 0, mean: 0, stdDev: 0, min: 0, max: 0 };
+  }
+
+  let sum = 0;
+  let min = finiteSamples[0];
+  let max = finiteSamples[0];
+  finiteSamples.forEach((v) => {
+    sum += v;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  });
+
+  const mean = sum / sampleCount;
+  const variance =
+    finiteSamples.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / sampleCount;
+  const stdDev = Math.sqrt(variance);
+
+  return {
+    sampleCount,
+    mean: Number(mean.toFixed(2)),
+    stdDev: Number(stdDev.toFixed(2)),
+    min: Number(min.toFixed(2)),
+    max: Number(max.toFixed(2)),
+  };
+}
+
+/**
+ * Evaluates student 3D world-landmark kinematics against a canonical mudra target.
+ * If world-landmark kinematics are unavailable (null/undefined), returns a
+ * MEASUREMENT_UNAVAILABLE result with 0 score and no stale evaluations.
  */
 export function evaluateMudraKinematics(
-  kinematics: HandKinematics,
+  kinematics: HandKinematics | null | undefined,
   targetMudra: CanonicalMudra
 ): MudraEvaluationResult {
+  if (!kinematics) {
+    return {
+      mudraId: targetMudra.id,
+      mudraName: targetMudra.name,
+      measurementStatus: 'MEASUREMENT_UNAVAILABLE',
+      coordinateSource: 'unavailable',
+      handedness: 'Unknown',
+      matchScore: 0,
+      isMastered: false,
+      primaryDirective:
+        'Measurement unavailable: 3D world landmarks were not returned for this frame. Ensure your full hand is clearly visible.',
+      secondaryDirective: undefined,
+      jointEvaluations: [],
+      totalWeight: 0,
+      totalWeightedPenalty: 0,
+    };
+  }
+
   const evaluations: JointEvaluation[] = [];
   let totalWeightedPenalty = 0;
   let totalWeight = 0;
 
-  // Helper to evaluate a single joint
+  // Helper to evaluate a single joint or spread angle (in degrees)
   const checkJoint = (
     jointKey: string,
     label: string,
@@ -34,15 +130,6 @@ export function evaluateMudraKinematics(
       status = 'MINOR_DEVIATION';
     }
 
-    evaluations.push({
-      jointKey,
-      label,
-      currentDegrees: Math.round(actualVal),
-      targetDegrees: target.targetDegrees,
-      deltaDegrees: Math.round(delta),
-      status,
-    });
-
     // Deadband-aware normalized squared penalty
     let ratio = 0;
     if (absDelta > tol) {
@@ -51,12 +138,30 @@ export function evaluateMudraKinematics(
       ratio = 1.0 + excess;
     } else {
       // Within tolerance (Green zone): mild linear ramp (0.0 to 0.35)
-      // so being within tolerance guarantees a high score (88% - 100%)
       ratio = (absDelta / tol) * 0.35;
     }
 
-    totalWeightedPenalty += target.weight * Math.min(ratio * ratio, 9.0);
+    const weightedPenalty = target.weight * Math.min(ratio * ratio, 9.0);
+    totalWeightedPenalty += weightedPenalty;
     totalWeight += target.weight;
+
+    evaluations.push({
+      jointKey,
+      label,
+      triplet: JOINT_TRIPLETS[jointKey],
+      rawValue: Number(actualVal.toFixed(2)),
+      currentDegrees: Math.round(actualVal),
+      targetDegrees: target.targetDegrees,
+      toleranceDegrees: tol,
+      acceptedRange: [
+        Math.max(0, target.targetDegrees - tol),
+        Math.min(180, target.targetDegrees + tol),
+      ],
+      deltaDegrees: Math.round(delta),
+      weight: target.weight,
+      weightedPenalty: Number(weightedPenalty.toFixed(3)),
+      status,
+    });
   };
 
   const t = targetMudra.targets;
@@ -81,7 +186,7 @@ export function evaluateMudraKinematics(
   checkJoint('pinky.mcp', 'Pinky Base (MCP)', kinematics.pinky.mcp, t.pinky.mcp);
   checkJoint('pinky.pip', 'Pinky Knuckle (PIP)', kinematics.pinky.pip, t.pinky.pip);
 
-  // Spreads if present
+  // Evaluate all configured inter-finger spreads (in degrees)
   if (t.spreadIndexMiddle) {
     checkJoint(
       'spreadIndexMiddle',
@@ -90,8 +195,24 @@ export function evaluateMudraKinematics(
       t.spreadIndexMiddle
     );
   }
+  if (t.spreadMiddleRing) {
+    checkJoint(
+      'spreadMiddleRing',
+      'Middle-Ring Gap',
+      kinematics.spreadMiddleRing,
+      t.spreadMiddleRing
+    );
+  }
+  if (t.spreadRingPinky) {
+    checkJoint(
+      'spreadRingPinky',
+      'Ring-Pinky Gap',
+      kinematics.spreadRingPinky,
+      t.spreadRingPinky
+    );
+  }
 
-  // Evaluate Physical Fingertip Contact Constraints (e.g. thumb and index pinch)
+  // Evaluate Physical Fingertip Contact Constraints (normalized by palmScale = distance(0, 9))
   let contactFailed = false;
   let topContactDirective = '';
 
@@ -109,27 +230,36 @@ export function evaluateMudraKinematics(
         status = 'MINOR_DEVIATION';
       }
 
-      evaluations.push({
-        jointKey: `contact.${contact.pair}`,
-        label: contact.label,
-        currentDegrees: Math.round(actualDist * 100),
-        targetDegrees: Math.round(maxAllowed * 100),
-        deltaDegrees: Math.round(delta * 100),
-        status,
-      });
-
+      let contactWeightedPenalty = 0;
       if (!isTouching) {
         contactFailed = true;
         // Severe penalty for breaking required physical contact
         const excess = (actualDist - maxAllowed) / maxAllowed;
         const ratio = 1.5 + excess * 2.0;
-        totalWeightedPenalty += 4.0 * (ratio * ratio);
+        contactWeightedPenalty = 4.0 * (ratio * ratio);
+        totalWeightedPenalty += contactWeightedPenalty;
         totalWeight += 4.0;
 
         if (!topContactDirective) {
           topContactDirective = contact.directive;
         }
       }
+
+      const jointKey = `contact.${contact.pair}`;
+      evaluations.push({
+        jointKey,
+        label: contact.label,
+        triplet: JOINT_TRIPLETS[jointKey],
+        rawValue: Number((actualDist * 100).toFixed(2)),
+        currentDegrees: Math.round(actualDist * 100),
+        targetDegrees: Math.round(maxAllowed * 100),
+        toleranceDegrees: Math.round(maxAllowed * 100),
+        acceptedRange: [0, Math.round(maxAllowed * 100)],
+        deltaDegrees: Math.round(delta * 100),
+        weight: 4.0,
+        weightedPenalty: Number(contactWeightedPenalty.toFixed(3)),
+        status,
+      });
     });
   }
 
@@ -144,9 +274,9 @@ export function evaluateMudraKinematics(
     matchScore = Math.min(matchScore, 65);
   }
 
-  // Identify top discrepancy to form pedagogical advice
+  // Identify top angular discrepancies to form pedagogical advice (excluding contact pseudo-entries)
   const incorrectJoints = evaluations
-    .filter((e) => e.status !== 'CORRECT')
+    .filter((e) => e.status !== 'CORRECT' && !e.jointKey.startsWith('contact.'))
     .sort((a, b) => Math.abs(b.deltaDegrees) - Math.abs(a.deltaDegrees));
 
   let primaryDirective = 'Excellent! Your hand posture closely matches the canonical Mudra.';
@@ -154,28 +284,11 @@ export function evaluateMudraKinematics(
 
   if (incorrectJoints.length > 0) {
     const topError = incorrectJoints[0];
-    const matchingRule = targetMudra.pedagogicalRules.find((rule) => {
-      if (rule.jointKey !== topError.jointKey) return false;
-      if (rule.condition === 'TOO_BENT' && topError.deltaDegrees > 0) return true;
-      if (rule.condition === 'TOO_STRAIGHT' && topError.deltaDegrees < 0) return true;
-      if (rule.condition === 'TOO_WIDE' && topError.deltaDegrees > 0) return true;
-      if (rule.condition === 'TOO_NARROW' && topError.deltaDegrees < 0) return true;
-      return false;
-    });
-
-    if (matchingRule) {
-      primaryDirective = matchingRule.directive;
-    } else {
-      const direction = topError.deltaDegrees > 0 ? 'too bent' : 'too straight';
-      primaryDirective = `Your ${topError.label} is ${direction} by ~${Math.abs(topError.deltaDegrees)}°. Adjust to ~${topError.targetDegrees}°.`;
-    }
+    primaryDirective = resolveJointDirective(targetMudra, topError);
 
     if (incorrectJoints.length > 1) {
       const secondError = incorrectJoints[1];
-      const secondRule = targetMudra.pedagogicalRules.find((r) => r.jointKey === secondError.jointKey);
-      if (secondRule) {
-        secondaryDirective = secondRule.directive;
-      }
+      secondaryDirective = resolveJointDirective(targetMudra, secondError);
     }
   }
 
@@ -195,11 +308,16 @@ export function evaluateMudraKinematics(
   return {
     mudraId: targetMudra.id,
     mudraName: targetMudra.name,
+    measurementStatus: 'VALID',
+    coordinateSource: kinematics.coordinateSource,
+    handedness: kinematics.handedness,
     matchScore,
     isMastered,
     primaryDirective,
     secondaryDirective,
     jointEvaluations: evaluations,
+    totalWeight: Number(totalWeight.toFixed(2)),
+    totalWeightedPenalty: Number(totalWeightedPenalty.toFixed(3)),
   };
 }
 
