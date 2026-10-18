@@ -62,12 +62,29 @@ const TEMPORAL_WINDOW_SIZE = 30; // Rolling frame window for temporal variabilit
 
 const SAMPLE_IMAGE_URLS = [
   {
-    label: 'Sample Hand (Open Palm / Pataka)',
+    label: 'Sample 1: Pataka (Hastalakshana Deepika #1)',
     url: '/samples/pataka_sample.jpg',
+    mudraId: 'pataka',
   },
   {
-    label: 'Sample Mudra Gesture',
-    url: '/samples/mudra_sample.jpg',
+    label: 'Sample 2: Mudrakhya (Hastalakshana Deepika #2)',
+    url: '/samples/mudrakhya_sample.jpg',
+    mudraId: 'mudrakhya',
+  },
+  {
+    label: 'Sample 3: Kataka / Katakamukha (Hastalakshana Deepika #3)',
+    url: '/samples/katakamukha_sample.jpg',
+    mudraId: 'katakamukha',
+  },
+  {
+    label: 'Sample 4: Musti (Hastalakshana Deepika #4)',
+    url: '/samples/musti_sample.jpg',
+    mudraId: 'musti',
+  },
+  {
+    label: 'Sample 5: Tripataka (Hastalakshana Deepika #17)',
+    url: '/samples/tripataka_sample.jpg',
+    mudraId: 'tripataka',
   },
 ];
 
@@ -132,7 +149,13 @@ const MudraPracticePage: React.FC = () => {
   const [inputMode, setInputMode] = useState<InputMode>('picture');
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string>(SAMPLE_IMAGE_URLS[0].url);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string>(() => {
+    const initialId =
+      mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]
+        ? mudraId.toLowerCase()
+        : DEFAULT_MUDRA_ID;
+    return CANONICAL_MUDRAS[initialId]?.referenceImageUrl || SAMPLE_IMAGE_URLS[0].url;
+  });
   const [evaluationResult, setEvaluationResult] = useState<MudraEvaluationResult | null>(null);
   const [latestKinematics, setLatestKinematics] = useState<HandKinematics | null>(null);
   const [handednessScore, setHandednessScore] = useState<number | null>(null);
@@ -204,10 +227,16 @@ const MudraPracticePage: React.FC = () => {
     setIsWebcamActive(false);
   }, []);
 
-  // Reset hold timer and temporal history when switching mudras
+  // Reset hold timer, temporal history, and default sample image when switching mudras
   useEffect(() => {
     resetHoldTimer();
     resetTemporalHistory();
+    setSelectedImageUrl((prevUrl) => {
+      const isBuiltInSample = SAMPLE_IMAGE_URLS.some((s) => s.url === prevUrl);
+      if (!isBuiltInSample) return prevUrl;
+      const matchingSample = SAMPLE_IMAGE_URLS.find((s) => s.mudraId === selectedMudraId);
+      return matchingSample ? matchingSample.url : prevUrl;
+    });
   }, [selectedMudraId, resetHoldTimer, resetTemporalHistory]);
 
   // Initialize MediaPipe model

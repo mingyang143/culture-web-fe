@@ -269,9 +269,19 @@ export function evaluateMudraKinematics(
   const rawScore = Math.exp(-0.5 * avgPenalty) * 100;
   let matchScore = Math.max(0, Math.min(100, Math.round(rawScore)));
 
-  // If a defining physical contact is failed, cap the score below the mastery threshold (max 65%)
+  const hasSignatureDiscrepancy = evaluations.some(
+    (e) =>
+      !e.jointKey.startsWith('contact.') &&
+      e.weight >= 2.0 &&
+      Math.abs(e.rawValue - e.targetDegrees) > e.toleranceDegrees * 1.2
+  );
+
+  // If a defining physical contact is failed, cap the score below the mastery threshold (max 65%);
+  // if a signature joint (weight >= 2.0) exceeds 1.2x tolerance, cap below mastery (max 84%).
   if (contactFailed) {
     matchScore = Math.min(matchScore, 65);
+  } else if (hasSignatureDiscrepancy) {
+    matchScore = Math.min(matchScore, 84);
   }
 
   // Identify top angular discrepancies to form pedagogical advice (excluding contact pseudo-entries)
@@ -299,7 +309,8 @@ export function evaluateMudraKinematics(
   }
 
   const hasSevereDiscrepancy = evaluations.some((e) => e.status === 'INCORRECT');
-  const isMastered = matchScore >= 88 && !contactFailed && !hasSevereDiscrepancy;
+  const isMastered =
+    matchScore >= 88 && !contactFailed && !hasSevereDiscrepancy && !hasSignatureDiscrepancy;
 
   if (isMastered) {
     primaryDirective = 'Flawless Form! Position holds true to canonical Kathakali technique.';

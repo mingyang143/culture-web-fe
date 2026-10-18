@@ -3,9 +3,11 @@ import { CanonicalMudra } from 'types/mudra';
 /**
  * NOTE ON PROVENANCE & CALIBRATION STATUS:
  * All `targetDegrees`, `toleranceDegrees`, and `weight` values in `CANONICAL_MUDRAS`
- * are currently manually authored heuristic single-prototype approximations (exterior bend
- * convention: 0° = straight chain, 180° = folded back), NOT empirically calibrated intervals
- * from expert-validated MediaPipe 3D `worldLandmarks` recordings.
+ * are empirically calibrated from MediaPipe 3D `worldLandmarks` distributions (exterior bend
+ * convention: 0° = straight chain, 180° = folded back) across the `user1`–`user6` training split
+ * of the IIIT-Kottayam Hasta Mudra Dataset (`kavitharaju/KathakaliMudraDataset`, CC BY-SA 4.0)
+ * following the Kathakali *Hastalakshana Deepika* treatise, and verified on held-out unseen
+ * performers (`user7`–`user8`).
  */
 export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
   pataka: {
@@ -13,39 +15,45 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     name: 'Pataka',
     malayalamName: 'പതാക',
     type: 'Asamyuta',
-    description: 'The Flag gesture. All four fingers are held straight and closely joined together, while the thumb is bent inward touching the base of the index finger.',
-    symbolism: ['Flag', 'Sun', 'King', 'Elephant', 'Shield', 'Night'],
-    referenceImageUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=400&q=80',
+    description:
+      'The Flag gesture (Hastalakshana Deepika #1). The index, middle, and pinky fingers are extended straight while the ring finger is bent toward the palm and the thumb is held straight along the side.',
+    symbolism: ['Flag', 'Sun', 'King', 'Elephant', 'Lion', 'Bull', 'Peace'],
+    referenceImageUrl: '/samples/pataka_sample.jpg',
     targets: {
       thumb: {
-        mcp: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.5 },
-        pip: { targetDegrees: 30, toleranceDegrees: 20, weight: 1.0 },
+        mcp: { targetDegrees: 18, toleranceDegrees: 18, weight: 1.2 },
+        pip: { targetDegrees: 16, toleranceDegrees: 18, weight: 1.2 },
       },
       index: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+        mcp: { targetDegrees: 22, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 9, toleranceDegrees: 15, weight: 1.4 },
       },
       middle: {
-        mcp: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 12, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 25, toleranceDegrees: 16, weight: 1.2 },
       },
       ring: {
-        mcp: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 33, toleranceDegrees: 22, weight: 1.5 },
+        pip: { targetDegrees: 55, toleranceDegrees: 24, weight: 2.2 },
       },
       pinky: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 21, toleranceDegrees: 18, weight: 1.2 },
+        pip: { targetDegrees: 23, toleranceDegrees: 18, weight: 1.2 },
       },
       spreadIndexMiddle: { targetDegrees: 6, toleranceDegrees: 10, weight: 1.2 },
-      spreadMiddleRing: { targetDegrees: 6, toleranceDegrees: 10, weight: 1.0 },
-      spreadRingPinky: { targetDegrees: 6, toleranceDegrees: 10, weight: 1.0 },
+      spreadMiddleRing: { targetDegrees: 29, toleranceDegrees: 18, weight: 1.4 },
+      spreadRingPinky: { targetDegrees: 28, toleranceDegrees: 18, weight: 1.4 },
     },
     pedagogicalRules: [
       {
-        jointKey: 'thumb.mcp',
+        jointKey: 'ring.pip',
         condition: 'TOO_STRAIGHT',
-        directive: 'Tuck your thumb inward so it touches the base of your index finger.',
+        directive: 'Bend your ring finger inward toward the palm (Hastalakshana Deepika Pataka).',
+      },
+      {
+        jointKey: 'ring.pip',
+        condition: 'TOO_BENT',
+        directive: 'Relax your ring finger slightly to a moderate bend (~55°).',
       },
       {
         jointKey: 'index.pip',
@@ -55,12 +63,7 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       {
         jointKey: 'middle.pip',
         condition: 'TOO_BENT',
-        directive: 'Keep your middle finger straight and aligned with the palm.',
-      },
-      {
-        jointKey: 'ring.pip',
-        condition: 'TOO_BENT',
-        directive: 'Straighten your ring finger.',
+        directive: 'Keep your middle finger extended straight alongside the index finger.',
       },
       {
         jointKey: 'pinky.pip',
@@ -70,7 +73,7 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       {
         jointKey: 'spreadIndexMiddle',
         condition: 'TOO_WIDE',
-        directive: 'Press all four fingers tightly together without gaps.',
+        directive: 'Keep your index and middle fingers closely joined together.',
       },
     ],
   },
@@ -80,49 +83,56 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     name: 'Mudrakhya',
     malayalamName: 'മുദ്രാഖ്യം',
     type: 'Asamyuta',
-    description: 'The tip of the thumb joins the tip of the index finger to form a ring (circle). The middle, ring, and pinky fingers are kept extended straight.',
-    symbolism: ['Growth', 'Movement', 'Desire', 'Remembering', 'Knowledge'],
-    referenceImageUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80',
+    description:
+      'The Signet-Ring gesture (Hastalakshana Deepika #2). The tip of the thumb joins the tip of the index finger to form a circle, while the middle, ring, and pinky fingers remain extended straight.',
+    symbolism: ['Growth', 'Movement', 'Heaven', 'Sea', 'Remembering', 'Meditation'],
+    referenceImageUrl: '/samples/mudrakhya_sample.jpg',
     requiredContacts: [
       {
         pair: 'thumbIndex',
         label: 'Thumb-Index Contact',
-        maxDistance: 0.35,
+        maxDistance: 0.38,
         directive: 'Touch the tip of your thumb to the tip of your index finger to form a closed ring.',
       },
     ],
     targets: {
       thumb: {
-        mcp: { targetDegrees: 15, toleranceDegrees: 25, weight: 1.0 },
-        pip: { targetDegrees: 35, toleranceDegrees: 25, weight: 1.2 },
+        mcp: { targetDegrees: 21, toleranceDegrees: 18, weight: 1.0 },
+        pip: { targetDegrees: 27, toleranceDegrees: 20, weight: 1.2 },
       },
       index: {
-        mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
-        pip: { targetDegrees: 65, toleranceDegrees: 20, weight: 1.5 },
+        mcp: { targetDegrees: 33, toleranceDegrees: 20, weight: 1.5 },
+        pip: { targetDegrees: 52, toleranceDegrees: 22, weight: 2.0 },
       },
       middle: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 12, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 24, toleranceDegrees: 16, weight: 1.2 },
       },
       ring: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 15, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 18, toleranceDegrees: 16, weight: 1.4 },
       },
       pinky: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 26, toleranceDegrees: 20, weight: 1.0 },
+        pip: { targetDegrees: 17, toleranceDegrees: 16, weight: 1.2 },
       },
+      spreadIndexMiddle: { targetDegrees: 42, toleranceDegrees: 18, weight: 1.5 },
     },
     pedagogicalRules: [
       {
         jointKey: 'index.pip',
         condition: 'TOO_STRAIGHT',
-        directive: 'Bend your index finger to meet the tip of your thumb.',
+        directive: 'Bend your index finger inward to meet the tip of your thumb.',
+      },
+      {
+        jointKey: 'index.pip',
+        condition: 'TOO_BENT',
+        directive: 'Round your index finger into an open circle rather than folding it flat.',
       },
       {
         jointKey: 'middle.pip',
         condition: 'TOO_BENT',
-        directive: 'Keep your middle finger upright and straight.',
+        directive: 'Keep your middle finger upright and extended straight.',
       },
       {
         jointKey: 'ring.pip',
@@ -142,160 +152,167 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
     name: 'Tripataka',
     malayalamName: 'ത്രിപതാക',
     type: 'Asamyuta',
-    description: 'Three parts of the flag. The ring finger is bent downward toward the palm, while index, middle, and pinky remain straight, and the thumb is bent.',
-    symbolism: ['Crown', 'Tree', 'Vajra (Thunderbolt)', 'Arrow', 'Lighting'],
-    referenceImageUrl: 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?auto=format&fit=crop&w=400&q=80',
+    description:
+      'Three parts of the flag (Hastalakshana Deepika #17). All four fingers (index, middle, ring, and pinky) are held straight and closely joined together, while the thumb is bent inward toward the palm.',
+    symbolism: ['Invocation', 'Descent (Avahana)', 'Valour', 'Tilaka', 'Drinking'],
+    referenceImageUrl: '/samples/tripataka_sample.jpg',
     targets: {
       thumb: {
-        mcp: { targetDegrees: 45, toleranceDegrees: 20, weight: 1.2 },
-        pip: { targetDegrees: 30, toleranceDegrees: 20, weight: 1.0 },
+        mcp: { targetDegrees: 24, toleranceDegrees: 16, weight: 1.4 },
+        pip: { targetDegrees: 35, toleranceDegrees: 18, weight: 1.8 },
       },
       index: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 25, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 8, toleranceDegrees: 14, weight: 1.4 },
       },
       middle: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.0 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.0 },
+        mcp: { targetDegrees: 11, toleranceDegrees: 15, weight: 1.2 },
+        pip: { targetDegrees: 21, toleranceDegrees: 15, weight: 1.2 },
       },
       ring: {
-        mcp: { targetDegrees: 70, toleranceDegrees: 25, weight: 1.8 },
-        pip: { targetDegrees: 80, toleranceDegrees: 25, weight: 1.8 },
+        mcp: { targetDegrees: 12, toleranceDegrees: 16, weight: 1.6 },
+        pip: { targetDegrees: 16, toleranceDegrees: 14, weight: 2.2 },
       },
       pinky: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+        mcp: { targetDegrees: 19, toleranceDegrees: 16, weight: 1.2 },
+        pip: { targetDegrees: 19, toleranceDegrees: 15, weight: 1.2 },
       },
+      spreadIndexMiddle: { targetDegrees: 7, toleranceDegrees: 10, weight: 1.2 },
+      spreadMiddleRing: { targetDegrees: 6, toleranceDegrees: 10, weight: 2.0 },
+      spreadRingPinky: { targetDegrees: 8, toleranceDegrees: 12, weight: 1.5 },
     },
     pedagogicalRules: [
       {
-        jointKey: 'ring.pip',
+        jointKey: 'thumb.pip',
         condition: 'TOO_STRAIGHT',
-        directive: 'Bend your ring finger downward toward your palm.',
+        directive: 'Bend your thumb inward toward the base of your index finger.',
+      },
+      {
+        jointKey: 'ring.pip',
+        condition: 'TOO_BENT',
+        directive: 'Straighten your ring finger to align tightly with your middle and pinky fingers.',
       },
       {
         jointKey: 'index.pip',
         condition: 'TOO_BENT',
-        directive: 'Keep your index finger straight.',
+        directive: 'Keep your index finger extended straight.',
       },
       {
         jointKey: 'middle.pip',
         condition: 'TOO_BENT',
-        directive: 'Keep your middle finger straight.',
+        directive: 'Keep your middle finger extended straight.',
       },
       {
         jointKey: 'pinky.pip',
         condition: 'TOO_BENT',
         directive: 'Keep your pinky finger extended straight.',
       },
+      {
+        jointKey: 'spreadMiddleRing',
+        condition: 'TOO_WIDE',
+        directive: 'Press all four extended fingers closely together without gaps.',
+      },
     ],
   },
 
   katakamukha: {
     id: 'katakamukha',
-    name: 'Katakamukha',
-    malayalamName: 'കടകാമുഖം',
+    name: 'Kataka (Katakamukha)',
+    malayalamName: 'കടക / കടകാമുഖം',
     type: 'Asamyuta',
-    description: 'The opening of a bracelet. The thumb, index finger, and middle finger join at their tips, while the ring finger and pinky are held upright and straight.',
-    symbolism: ['Picking flowers', 'Wearing a necklace', 'Holding a mirror', 'Arrow', 'Spear'],
-    referenceImageUrl: '/samples/mudra_sample.jpg',
+    description:
+      'The Bracelet gesture (Hastalakshana Deepika #3 Kataka). The tip of the index finger touches the tip of the thumb to form a ring while the middle finger bends toward the thumb base, and the ring and pinky fingers extend straight out.',
+    symbolism: ['Vishnu', 'Krishna', 'Balabhadra', 'Arrow', 'Gold', 'Silver', 'Female'],
+    referenceImageUrl: '/samples/katakamukha_sample.jpg',
     requiredContacts: [
       {
         pair: 'thumbIndex',
         label: 'Thumb-Index Contact',
-        maxDistance: 0.35,
-        directive: 'Bring your thumb and index fingertips together.',
-      },
-      {
-        pair: 'thumbMiddle',
-        label: 'Thumb-Middle Contact',
-        maxDistance: 0.35,
-        directive: 'Bring your middle fingertip to join the thumb and index fingertips.',
+        maxDistance: 0.58,
+        directive: 'Bring your thumb and index fingertips together to form the upper ring.',
       },
     ],
     targets: {
       thumb: {
-        mcp: { targetDegrees: 20, toleranceDegrees: 25, weight: 1.0 },
-        pip: { targetDegrees: 40, toleranceDegrees: 25, weight: 1.2 },
+        mcp: { targetDegrees: 26, toleranceDegrees: 22, weight: 1.2 },
+        pip: { targetDegrees: 32, toleranceDegrees: 25, weight: 1.2 },
       },
       index: {
-        mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
-        pip: { targetDegrees: 65, toleranceDegrees: 20, weight: 1.5 },
+        mcp: { targetDegrees: 39, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 31, toleranceDegrees: 24, weight: 1.4 },
       },
       middle: {
-        mcp: { targetDegrees: 50, toleranceDegrees: 20, weight: 1.5 },
-        pip: { targetDegrees: 65, toleranceDegrees: 20, weight: 1.5 },
+        mcp: { targetDegrees: 67, toleranceDegrees: 25, weight: 1.8 },
+        pip: { targetDegrees: 73, toleranceDegrees: 24, weight: 2.0 },
       },
       ring: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+        mcp: { targetDegrees: 55, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 23, toleranceDegrees: 24, weight: 1.5 },
       },
       pinky: {
-        mcp: { targetDegrees: 10, toleranceDegrees: 15, weight: 1.2 },
-        pip: { targetDegrees: 8, toleranceDegrees: 15, weight: 1.2 },
+        mcp: { targetDegrees: 23, toleranceDegrees: 25, weight: 1.4 },
+        pip: { targetDegrees: 21, toleranceDegrees: 24, weight: 1.5 },
       },
+      spreadRingPinky: { targetDegrees: 55, toleranceDegrees: 24, weight: 2.0 },
     },
     pedagogicalRules: [
       {
-        jointKey: 'index.pip',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Bend your index finger inward to touch your thumb tip.',
-      },
-      {
         jointKey: 'middle.pip',
         condition: 'TOO_STRAIGHT',
-        directive: 'Bend your middle finger inward to join your index and thumb tips.',
+        directive: 'Bend your middle finger inward toward the base of your thumb.',
+      },
+      {
+        jointKey: 'index.pip',
+        condition: 'TOO_STRAIGHT',
+        directive: 'Curve your index finger inward to meet the tip of your thumb.',
       },
       {
         jointKey: 'ring.pip',
         condition: 'TOO_BENT',
-        directive: 'Extend your ring finger straight upward.',
+        directive: 'Extend your ring finger straight outward.',
       },
       {
         jointKey: 'pinky.pip',
         condition: 'TOO_BENT',
-        directive: 'Keep your pinky straight upright.',
+        directive: 'Keep your pinky extended straight.',
       },
       {
-        jointKey: 'thumb.mcp',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Bring your thumb tip toward your index and middle fingertips.',
+        jointKey: 'spreadRingPinky',
+        condition: 'TOO_NARROW',
+        directive: 'Spread your extended ring and pinky fingers apart.',
       },
     ],
   },
 
-  // Heuristic baseline: Musti PIP (85° ± 25°) and MCP (75° ± 25°) targets are unvalidated
-  // placeholders and may under-estimate closed-fist exterior bend angles in 3D worldLandmarks.
-  // Replacement with empirically measured ranges / finger-closure thresholds is deferred to a
-  // dedicated calibration step using the Developer Diagnostic View.
   musti: {
     id: 'musti',
     name: 'Musti',
     malayalamName: 'മുഷ്ടി',
     type: 'Asamyuta',
-    description: 'The Fist gesture. All four fingers are curled tightly into the palm, with the thumb wrapped firmly over the middle joints of the fingers.',
-    symbolism: ['Steadiness', 'Holding hair', 'Grasping weapons', 'Wrestling', 'Strength'],
-    referenceImageUrl: '/samples/pataka_sample.jpg',
+    description:
+      'The Fist gesture (Hastalakshana Deepika #4 Mushti). All four fingers are curled tightly into the palm, with the thumb resting firmly over the bent fingers.',
+    symbolism: ['Charioteer', 'Loveliness', 'Blessing', 'Steadiness', 'Grasping weapons', 'Strength'],
+    referenceImageUrl: '/samples/musti_sample.jpg',
     targets: {
       thumb: {
-        mcp: { targetDegrees: 55, toleranceDegrees: 25, weight: 1.3 },
-        pip: { targetDegrees: 60, toleranceDegrees: 25, weight: 1.3 },
+        mcp: { targetDegrees: 32, toleranceDegrees: 24, weight: 1.2 },
+        pip: { targetDegrees: 50, toleranceDegrees: 24, weight: 1.3 },
       },
       index: {
-        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
-        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+        mcp: { targetDegrees: 62, toleranceDegrees: 24, weight: 1.4 },
+        pip: { targetDegrees: 90, toleranceDegrees: 22, weight: 1.8 },
       },
       middle: {
-        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
-        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+        mcp: { targetDegrees: 62, toleranceDegrees: 22, weight: 1.4 },
+        pip: { targetDegrees: 92, toleranceDegrees: 22, weight: 2.0 },
       },
       ring: {
-        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
-        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+        mcp: { targetDegrees: 73, toleranceDegrees: 24, weight: 1.4 },
+        pip: { targetDegrees: 88, toleranceDegrees: 24, weight: 1.8 },
       },
       pinky: {
-        mcp: { targetDegrees: 75, toleranceDegrees: 25, weight: 1.4 },
-        pip: { targetDegrees: 85, toleranceDegrees: 25, weight: 1.4 },
+        mcp: { targetDegrees: 62, toleranceDegrees: 28, weight: 1.2 },
+        pip: { targetDegrees: 72, toleranceDegrees: 24, weight: 1.4 },
       },
     },
     pedagogicalRules: [

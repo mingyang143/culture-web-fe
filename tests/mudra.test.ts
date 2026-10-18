@@ -193,16 +193,16 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(baseKinematics).not.toBeNull();
     if (!baseKinematics) return;
 
-    // Case 1: Both index.pip (+60° over 85° target) and pinky.pip (+50° over 85° target) are TOO_BENT in Musti.
+    // Case 1: Both index.pip (+60° over 90° target) and pinky.pip (+50° over 72° target) are TOO_BENT in Musti.
     // Musti only has TOO_STRAIGHT rules in pedagogicalRules, so NEITHER primary nor secondary
     // may falsely match a TOO_STRAIGHT rule ("Curl your pinky tightly into your palm.").
     const overBentMusti: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 55, pip: 60 },
-      index: { mcp: 75, pip: 145, dip: 80 },
-      middle: { mcp: 75, pip: 85, dip: 80 },
-      ring: { mcp: 75, pip: 85, dip: 80 },
-      pinky: { mcp: 75, pip: 135, dip: 80 },
+      thumb: { mcp: 32, pip: 50 },
+      index: { mcp: 62, pip: 150, dip: 80 },
+      middle: { mcp: 62, pip: 92, dip: 80 },
+      ring: { mcp: 73, pip: 88, dip: 80 },
+      pinky: { mcp: 62, pip: 122, dip: 80 },
     };
 
     const resOverBent = evaluateMudraKinematics(overBentMusti, CANONICAL_MUDRAS.musti);
@@ -211,15 +211,15 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(resOverBent.secondaryDirective).toContain('Pinky Knuckle (PIP) is too bent by ~50°');
     expect(resOverBent.secondaryDirective).not.toContain('Curl your pinky');
 
-    // Case 2: Both index.pip (-65° under 85° target) and pinky.pip (-55° under 85° target) are TOO_STRAIGHT.
+    // Case 2: Both index.pip (-70° under 90° target) and pinky.pip (-42° under 72° target) are TOO_STRAIGHT.
     // Both primary and secondary must match their configured TOO_STRAIGHT rules.
     const underBentMusti: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 55, pip: 60 },
-      index: { mcp: 75, pip: 20, dip: 10 },
-      middle: { mcp: 75, pip: 85, dip: 80 },
-      ring: { mcp: 75, pip: 85, dip: 80 },
-      pinky: { mcp: 75, pip: 30, dip: 10 },
+      thumb: { mcp: 32, pip: 50 },
+      index: { mcp: 62, pip: 20, dip: 10 },
+      middle: { mcp: 62, pip: 92, dip: 80 },
+      ring: { mcp: 73, pip: 88, dip: 80 },
+      pinky: { mcp: 62, pip: 30, dip: 10 },
     };
 
     const resUnderBent = evaluateMudraKinematics(underBentMusti, CANONICAL_MUDRAS.musti);
@@ -234,14 +234,14 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
     const wideRingPinkyPataka: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 45, pip: 30 },
-      index: { mcp: 10, pip: 8, dip: 5 },
-      middle: { mcp: 8, pip: 8, dip: 5 },
-      ring: { mcp: 8, pip: 8, dip: 5 },
-      pinky: { mcp: 10, pip: 8, dip: 5 },
+      thumb: { mcp: 18, pip: 16 },
+      index: { mcp: 22, pip: 9, dip: 5 },
+      middle: { mcp: 12, pip: 25, dip: 5 },
+      ring: { mcp: 33, pip: 55, dip: 5 },
+      pinky: { mcp: 21, pip: 23, dip: 5 },
       spreadIndexMiddle: 6,
-      spreadMiddleRing: 28, // +22° above target 6° (tolerance 10°)
-      spreadRingPinky: 36, // +30° above target 6° (tolerance 10°)
+      spreadMiddleRing: 51, // +22° above target 29° (tolerance 18°)
+      spreadRingPinky: 58, // +30° above target 28° (tolerance 18°)
     };
 
     const evalPataka = evaluateMudraKinematics(wideRingPinkyPataka, CANONICAL_MUDRAS.pataka);
@@ -257,6 +257,49 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(evalPataka.isMastered).toBe(false);
     expect(evalPataka.primaryDirective).toContain('Ring-Pinky Gap is too wide by ~30°');
     expect(evalPataka.secondaryDirective).toContain('Middle-Ring Gap is too wide by ~22°');
+  });
+
+  test('gates mastery via signature joints (weight >= 2.0) and validates empirical Musti 3D worldLandmarks targets', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    // 1. Empirical mean 3D worldLandmarks posture from KathakaliMudraDataset 4.mushti (n=37)
+    const empiricalMusti: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 31.8, pip: 50.4 },
+      index: { mcp: 61.2, pip: 89.7, dip: 70 },
+      middle: { mcp: 62.1, pip: 93.6, dip: 72 },
+      ring: { mcp: 73.1, pip: 89.2, dip: 70 },
+      pinky: { mcp: 61.6, pip: 72.1, dip: 65 },
+    };
+    const mustiEval = evaluateMudraKinematics(empiricalMusti, CANONICAL_MUDRAS.musti);
+    expect(mustiEval.isMastered).toBe(true);
+    expect(mustiEval.matchScore).toBeGreaterThanOrEqual(95);
+
+    // 2. Signature-joint gate: Pataka requires ring.pip ~55° ± 24° (weight 2.2).
+    // If ring.pip is held straight at 16° (as in Tripataka) while all other joints match Pataka perfectly,
+    // signature-joint gating must cap matchScore <= 84 and prevent false mastery.
+    const straightRingInPataka: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 18, pip: 16 },
+      index: { mcp: 22, pip: 9, dip: 5 },
+      middle: { mcp: 12, pip: 25, dip: 5 },
+      ring: { mcp: 33, pip: 16, dip: 5 }, // delta = -39° (> 24° * 1.2 = 28.8°)
+      pinky: { mcp: 21, pip: 23, dip: 5 },
+      spreadIndexMiddle: 6,
+      spreadMiddleRing: 29,
+      spreadRingPinky: 28,
+    };
+    const patakaSignatureFail = evaluateMudraKinematics(
+      straightRingInPataka,
+      CANONICAL_MUDRAS.pataka
+    );
+    expect(patakaSignatureFail.isMastered).toBe(false);
+    expect(patakaSignatureFail.matchScore).toBeLessThanOrEqual(84);
+    expect(patakaSignatureFail.primaryDirective).toContain(
+      'Bend your ring finger inward toward the palm'
+    );
   });
 
   test('computes rolling temporal variability stats accurately for calibration telemetry', () => {
