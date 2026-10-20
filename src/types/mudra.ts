@@ -86,7 +86,7 @@ export interface CanonicalMudra {
   // Physical fingertip contact constraints (e.g. thumb and index touching for Mudrakhya)
   requiredContacts?: RequiredFingertipContact[];
 
-  // Target joint kinematics (currently heuristic prototypes pending world-landmark calibration)
+  // Target joint kinematics
   targets: {
     thumb: {
       mcp: JointTolerance;
@@ -146,9 +146,22 @@ export interface MudraEvaluationResult {
   isMastered: boolean;
   primaryDirective: string;
   secondaryDirective?: string;
+  primaryJointKey?: string;
+  secondaryJointKey?: string;
   jointEvaluations: JointEvaluation[];
   totalWeight?: number;
   totalWeightedPenalty?: number;
+}
+
+export interface CoachingAnchorState {
+  mudraId: string;
+  anchorVector: number[];
+  primaryDirective: string;
+  secondaryDirective?: string;
+  primaryJointKey?: string;
+  secondaryJointKey?: string;
+  wasMastered: boolean;
+  updatedAtMs: number;
 }
 
 export interface TemporalFeatureStats {

@@ -46,6 +46,7 @@ import {
 import {
   evaluateMudraKinematics,
   computeTemporalFeatureStats,
+  stabilizeCoachingEvaluation,
 } from 'utils/mudraEvaluator';
 import { handLandmarkerService, HAND_CONNECTIONS } from 'services/handLandmarkerService';
 import {
@@ -55,6 +56,7 @@ import {
   CanonicalMudra,
   HandKinematics,
   TemporalFeatureStats,
+  CoachingAnchorState,
 } from 'types/mudra';
 
 const { Title, Text, Paragraph } = Typography;
@@ -173,6 +175,7 @@ const MudraPracticePage: React.FC = () => {
   const lastFrameTimeRef = useRef<number | null>(null);
   const masteredLockedRef = useRef<boolean>(false);
   const isDetectingFrameRef = useRef<boolean>(false);
+  const coachingAnchorRef = useRef<CoachingAnchorState | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -208,6 +211,7 @@ const MudraPracticePage: React.FC = () => {
     holdElapsedMsRef.current = 0;
     lastFrameTimeRef.current = null;
     masteredLockedRef.current = false;
+    coachingAnchorRef.current = null;
     setHoldProgressMs(0);
     setIsHoldMastered(false);
   }, []);
@@ -557,7 +561,14 @@ const MudraPracticePage: React.FC = () => {
           const kinematics = extractHandKinematics(firstWorldHand, handedness);
           setLatestKinematics(kinematics);
 
-          const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
+          const rawEvalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
+          const { stabilizedEval: evalRes, nextAnchor } = stabilizeCoachingEvaluation(
+            rawEvalRes,
+            kinematics,
+            coachingAnchorRef.current,
+            now
+          );
+          coachingAnchorRef.current = nextAnchor;
           setEvaluationResult(evalRes);
 
           if (kinematics) {
@@ -595,6 +606,7 @@ const MudraPracticePage: React.FC = () => {
           drawSkeleton(ctx, firstOverlayHand, canvas.width, canvas.height, evalRes);
         } else {
           // Tracking lost: clear stale kinematics/evaluation and reset unmastered hold timer
+          coachingAnchorRef.current = null;
           setLatestKinematics(null);
           setHandednessScore(null);
           setEvaluationResult(null);

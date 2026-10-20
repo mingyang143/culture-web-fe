@@ -3,6 +3,7 @@ import {
   CanonicalMudra,
   MudraEvaluationResult,
   JointEvaluation,
+  CoachingAnchorState,
   TemporalFeatureStats,
 } from 'types/mudra';
 import { JOINT_TRIPLETS } from 'utils/mudraKinematics';
@@ -46,6 +47,195 @@ export function resolveJointDirective(
     matchesPedagogicalRule(rule, evaluation)
   );
   return matchingRule ? matchingRule.directive : formatFallbackDirective(evaluation);
+}
+
+/**
+ * Extracts a 17-element numerical feature vector from 3D HandKinematics:
+ * - [0..9]:   10 core finger joint flexion angles (degrees)
+ * - [10..12]: 3 inter-finger abduction spread angles (degrees)
+ * - [13..16]: 4 palm-normalized fingertip contact distances (scaled x100)
+ */
+export function extractKinematicsFeatureVector(kinematics: HandKinematics): number[] {
+  return [
+    kinematics.thumb.mcp,
+    kinematics.thumb.pip,
+    kinematics.index.mcp,
+    kinematics.index.pip,
+    kinematics.middle.mcp,
+    kinematics.middle.pip,
+    kinematics.ring.mcp,
+    kinematics.ring.pip,
+    kinematics.pinky.mcp,
+    kinematics.pinky.pip,
+    kinematics.spreadIndexMiddle,
+    kinematics.spreadMiddleRing,
+    kinematics.spreadRingPinky,
+    kinematics.tipDistances.thumbIndex * 100,
+    kinematics.tipDistances.thumbMiddle * 100,
+    kinematics.tipDistances.thumbRing * 100,
+    kinematics.tipDistances.thumbPinky * 100,
+  ];
+}
+
+/**
+ * Compares two 17-element kinematics feature vectors to determine if the hand pose
+ * is effectively unchanged (within MediaPipe / camera jitter deadband).
+ *
+ * Returns true when:
+ * - Mean absolute difference across the 10 joint flexion angles <= meanAngleThresholdDeg (default 5.5°)
+ * - Maximum single-joint flexion difference <= maxJointAngleThresholdDeg (default 12.0°)
+ * - Maximum fingertip contact distance change <= maxContactDelta (default 10.0, i.e. 0.10 palm scale)
+ */
+export function areKinematicsVectorsSimilar(
+  vecA: number[],
+  vecB: number[],
+  meanAngleThresholdDeg = 5.5,
+  maxJointAngleThresholdDeg = 12.0,
+  maxContactDelta = 10.0
+): boolean {
+  if (vecA.length < 17 || vecB.length < 17) return false;
+
+  let angleDiffSum = 0;
+  let maxAngleDiff = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const diff = Math.abs(vecA[i] - vecB[i]);
+    angleDiffSum += diff;
+    if (diff > maxAngleDiff) {
+      maxAngleDiff = diff;
+    }
+  }
+
+  const meanAngleDiff = angleDiffSum / 10;
+  if (meanAngleDiff > meanAngleThresholdDeg || maxAngleDiff > maxJointAngleThresholdDeg) {
+    return false;
+  }
+
+  for (let i = 13; i < 17; i += 1) {
+    if (Math.abs(vecA[i] - vecB[i]) > maxContactDelta) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Stabilizes live video coaching directives using Anchor-Vector Similarity Gating
+ * combined with Sticky Target-Joint Completion:
+ * 1. If the hand pose vector is similar to the anchor vector (when the current advice was issued)
+ *    and the coached joint hasn't become CORRECT, keep the exact same coaching text.
+ * 2. If the user is actively moving toward fixing the coached joint (still not CORRECT)
+ *    within the minimum reading/reaction dwell window (default 1400ms), keep the directive locked
+ *    on that joint so advice never swaps mid-movement.
+ * 3. As soon as the coached joint becomes CORRECT (or the mudra is mastered), release immediately.
+ */
+export function stabilizeCoachingEvaluation(
+  currentEval: MudraEvaluationResult,
+  currentKinematics: HandKinematics | null | undefined,
+  anchorState: CoachingAnchorState | null,
+  nowMs: number,
+  minDwellMs = 1400
+): { stabilizedEval: MudraEvaluationResult; nextAnchor: CoachingAnchorState | null } {
+  if (!currentKinematics || currentEval.measurementStatus === 'MEASUREMENT_UNAVAILABLE') {
+    return { stabilizedEval: currentEval, nextAnchor: null };
+  }
+
+  const currentVector = extractKinematicsFeatureVector(currentKinematics);
+
+  const createAnchor = (evalRes: MudraEvaluationResult): CoachingAnchorState => ({
+    mudraId: evalRes.mudraId,
+    anchorVector: currentVector,
+    primaryDirective: evalRes.primaryDirective,
+    secondaryDirective: evalRes.secondaryDirective,
+    primaryJointKey: evalRes.primaryJointKey,
+    secondaryJointKey: evalRes.secondaryJointKey,
+    wasMastered: evalRes.isMastered,
+    updatedAtMs: nowMs,
+  });
+
+  // Always surface mastery immediately
+  if (currentEval.isMastered) {
+    return {
+      stabilizedEval: currentEval,
+      nextAnchor: createAnchor(currentEval),
+    };
+  }
+
+  // Initialize anchor if none exists, if target mudra changed, or if transitioning out of mastery
+  if (
+    !anchorState ||
+    anchorState.mudraId !== currentEval.mudraId ||
+    anchorState.wasMastered
+  ) {
+    return {
+      stabilizedEval: currentEval,
+      nextAnchor: createAnchor(currentEval),
+    };
+  }
+
+  // Check if the previously coached primary joint is now resolved (CORRECT)
+  const lockedJointEval = anchorState.primaryJointKey
+    ? currentEval.jointEvaluations.find((j) => j.jointKey === anchorState.primaryJointKey)
+    : undefined;
+  const isLockedJointResolved = Boolean(
+    anchorState.primaryJointKey && (!lockedJointEval || lockedJointEval.status === 'CORRECT')
+  );
+
+  // Immediate release when the user fixes the joint they were coached on
+  if (isLockedJointResolved) {
+    return {
+      stabilizedEval: currentEval,
+      nextAnchor: createAnchor(currentEval),
+    };
+  }
+
+  // Gate 1: Anchor-Vector Similarity Gate — if the hand pose hasn't meaningfully changed
+  // from when the advice was issued, freeze the coaching text (without drifting the anchor).
+  if (areKinematicsVectorsSimilar(currentVector, anchorState.anchorVector)) {
+    return {
+      stabilizedEval: {
+        ...currentEval,
+        primaryDirective: anchorState.primaryDirective,
+        secondaryDirective: anchorState.secondaryDirective,
+        primaryJointKey: anchorState.primaryJointKey,
+        secondaryJointKey: anchorState.secondaryJointKey,
+      },
+      nextAnchor: anchorState,
+    };
+  }
+
+  // Gate 2: Mid-Motion Continuity — while the user is actively moving to fix the locked joint
+  // (which is still not CORRECT), hold the directive during the minimum dwell window or while
+  // the same joint remains the primary error so degree numbers don't flicker mid-motion.
+  const newlyBrokeContact =
+    currentEval.primaryJointKey?.startsWith('contact.') &&
+    currentEval.primaryJointKey !== anchorState.primaryJointKey;
+  const withinDwellWindow = nowMs - anchorState.updatedAtMs < minDwellMs;
+  const isSamePrimaryJoint =
+    Boolean(anchorState.primaryJointKey) &&
+    currentEval.primaryJointKey === anchorState.primaryJointKey;
+
+  if (!newlyBrokeContact && (withinDwellWindow || isSamePrimaryJoint)) {
+    return {
+      stabilizedEval: {
+        ...currentEval,
+        primaryDirective: anchorState.primaryDirective,
+        secondaryDirective: anchorState.secondaryDirective,
+        primaryJointKey: anchorState.primaryJointKey,
+        secondaryJointKey: anchorState.secondaryJointKey,
+      },
+      nextAnchor: {
+        ...anchorState,
+        // Update anchor vector when remaining on the same primary joint after dwell
+        anchorVector: withinDwellWindow ? anchorState.anchorVector : currentVector,
+      },
+    };
+  }
+
+  return {
+    stabilizedEval: currentEval,
+    nextAnchor: createAnchor(currentEval),
+  };
 }
 
 /**
@@ -215,6 +405,7 @@ export function evaluateMudraKinematics(
   // Evaluate Physical Fingertip Contact Constraints (normalized by palmScale = distance(0, 9))
   let contactFailed = false;
   let topContactDirective = '';
+  let topContactJointKey: string | undefined;
 
   if (targetMudra.requiredContacts && kinematics.tipDistances) {
     targetMudra.requiredContacts.forEach((contact) => {
@@ -222,6 +413,7 @@ export function evaluateMudraKinematics(
       const maxAllowed = contact.maxDistance;
       const isTouching = actualDist <= maxAllowed;
       const delta = actualDist - maxAllowed;
+      const jointKey = `contact.${contact.pair}`;
 
       let status: JointEvaluation['status'] = 'CORRECT';
       if (actualDist > maxAllowed * 1.5) {
@@ -242,10 +434,10 @@ export function evaluateMudraKinematics(
 
         if (!topContactDirective) {
           topContactDirective = contact.directive;
+          topContactJointKey = jointKey;
         }
       }
 
-      const jointKey = `contact.${contact.pair}`;
       evaluations.push({
         jointKey,
         label: contact.label,
@@ -272,8 +464,9 @@ export function evaluateMudraKinematics(
   const hasSignatureDiscrepancy = evaluations.some(
     (e) =>
       !e.jointKey.startsWith('contact.') &&
-      e.weight >= 2.0 &&
-      Math.abs(e.rawValue - e.targetDegrees) > e.toleranceDegrees * 1.2
+      (e.weight ?? 1.0) >= 2.0 &&
+      Math.abs((e.rawValue ?? e.currentDegrees) - e.targetDegrees) >
+        (e.toleranceDegrees ?? 15) * 1.2
   );
 
   // If a defining physical contact is failed, cap the score below the mastery threshold (max 65%);
@@ -284,28 +477,44 @@ export function evaluateMudraKinematics(
     matchScore = Math.min(matchScore, 84);
   }
 
-  // Identify top angular discrepancies to form pedagogical advice (excluding contact pseudo-entries)
+  // Identify top angular discrepancies to form pedagogical advice (excluding contact pseudo-entries),
+  // prioritizing weighted penalty (signature joints first) with raw angular delta as tiebreaker.
   const incorrectJoints = evaluations
     .filter((e) => e.status !== 'CORRECT' && !e.jointKey.startsWith('contact.'))
-    .sort((a, b) => Math.abs(b.deltaDegrees) - Math.abs(a.deltaDegrees));
+    .sort((a, b) => {
+      const penaltyDiff = (b.weightedPenalty ?? 0) - (a.weightedPenalty ?? 0);
+      if (Math.abs(penaltyDiff) > 0.25) return penaltyDiff;
+      return Math.abs(b.deltaDegrees) - Math.abs(a.deltaDegrees);
+    });
 
   let primaryDirective = 'Excellent! Your hand posture closely matches the canonical Mudra.';
   let secondaryDirective: string | undefined;
+  let primaryJointKey: string | undefined;
+  let secondaryJointKey: string | undefined;
 
   if (incorrectJoints.length > 0) {
     const topError = incorrectJoints[0];
     primaryDirective = resolveJointDirective(targetMudra, topError);
+    primaryJointKey = topError.jointKey;
 
     if (incorrectJoints.length > 1) {
       const secondError = incorrectJoints[1];
       secondaryDirective = resolveJointDirective(targetMudra, secondError);
+      secondaryJointKey = secondError.jointKey;
     }
   }
 
   // If a physical contact failed, make that the primary guidance!
   if (contactFailed && topContactDirective) {
-    secondaryDirective = primaryDirective !== topContactDirective ? primaryDirective : undefined;
+    if (primaryDirective !== topContactDirective) {
+      secondaryDirective = primaryDirective;
+      secondaryJointKey = primaryJointKey;
+    } else {
+      secondaryDirective = undefined;
+      secondaryJointKey = undefined;
+    }
     primaryDirective = topContactDirective;
+    primaryJointKey = topContactJointKey;
   }
 
   const hasSevereDiscrepancy = evaluations.some((e) => e.status === 'INCORRECT');
@@ -314,6 +523,8 @@ export function evaluateMudraKinematics(
 
   if (isMastered) {
     primaryDirective = 'Flawless Form! Position holds true to canonical Kathakali technique.';
+    primaryJointKey = undefined;
+    secondaryJointKey = undefined;
   }
 
   return {
@@ -326,6 +537,8 @@ export function evaluateMudraKinematics(
     isMastered,
     primaryDirective,
     secondaryDirective,
+    primaryJointKey,
+    secondaryJointKey,
     jointEvaluations: evaluations,
     totalWeight: Number(totalWeight.toFixed(2)),
     totalWeightedPenalty: Number(totalWeightedPenalty.toFixed(3)),

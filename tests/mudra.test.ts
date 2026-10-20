@@ -10,6 +10,9 @@ import {
 import {
   evaluateMudraKinematics,
   computeTemporalFeatureStats,
+  extractKinematicsFeatureVector,
+  areKinematicsVectorsSimilar,
+  stabilizeCoachingEvaluation,
 } from 'utils/mudraEvaluator';
 import { CANONICAL_MUDRAS, resolveCanonicalMudraId } from 'data/canonicalMudras';
 
@@ -439,6 +442,97 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(stats.min).toBe(138);
     expect(stats.max).toBe(142);
     expect(stats.stdDev).toBeCloseTo(1.41, 2);
+  });
+
+  test('stabilizes AI coach directives via anchor-vector similarity gate and sticky joint completion', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    // 1. Frame 0: index.pip is slightly more wrong than middle.pip in Mushti
+    const frame0Pose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 35, pip: 42 },
+      index: { mcp: 78, pip: 28, dip: 20 }, // -67° from 95° target
+      middle: { mcp: 78, pip: 30, dip: 20 }, // -65° from 95° target
+      ring: { mcp: 75, pip: 95, dip: 60 },
+      pinky: { mcp: 75, pip: 92, dip: 60 },
+    };
+
+    // Frame 1 (50ms later): minor MediaPipe jitter (±3°) swaps raw rank #1 and #2 between index.pip and middle.pip
+    const frame1JitterPose: typeof baseKinematics = {
+      ...frame0Pose,
+      index: { mcp: 78, pip: 31, dip: 20 }, // -64°
+      middle: { mcp: 78, pip: 27, dip: 20 }, // -68°
+    };
+
+    const vec0 = extractKinematicsFeatureVector(frame0Pose);
+    const vec1 = extractKinematicsFeatureVector(frame1JitterPose);
+    expect(vec0).toHaveLength(17);
+    expect(areKinematicsVectorsSimilar(vec0, vec1)).toBe(true);
+
+    const rawEval0 = evaluateMudraKinematics(frame0Pose, CANONICAL_MUDRAS.mushti);
+    const rawEval1 = evaluateMudraKinematics(frame1JitterPose, CANONICAL_MUDRAS.mushti);
+    // Raw evaluation flips primary joint from index.pip to middle.pip on a 3° jitter
+    expect(rawEval0.primaryJointKey).toBe('index.pip');
+    expect(rawEval1.primaryJointKey).toBe('middle.pip');
+
+    // Stabilized evaluation freezes the anchor directive on frame 1
+    const step0 = stabilizeCoachingEvaluation(rawEval0, frame0Pose, null, 1000);
+    expect(step0.stabilizedEval.primaryJointKey).toBe('index.pip');
+
+    const step1 = stabilizeCoachingEvaluation(
+      rawEval1,
+      frame1JitterPose,
+      step0.nextAnchor,
+      1050
+    );
+    expect(step1.stabilizedEval.primaryJointKey).toBe('index.pip');
+    expect(step1.stabilizedEval.primaryDirective).toBe(step0.stabilizedEval.primaryDirective);
+    // Live matchScore is still updated every frame
+    expect(step1.stabilizedEval.matchScore).toBe(rawEval1.matchScore);
+
+    // 2. Frame 2 (400ms later): user is mid-way curling index.pip (moved +30° to 58°, still <73° min).
+    // Even though vector moved >12° (not similar to anchor), sticky joint lock holds index.pip directive
+    // while user is actively fixing it so the coach doesn't switch to middle.pip mid-action.
+    const frame2MidActionPose: typeof baseKinematics = {
+      ...frame0Pose,
+      index: { mcp: 78, pip: 58, dip: 45 }, // still TOO_STRAIGHT (-37°), now less wrong than middle.pip (-65°)
+      middle: { mcp: 78, pip: 30, dip: 20 },
+    };
+    const vec2 = extractKinematicsFeatureVector(frame2MidActionPose);
+    expect(areKinematicsVectorsSimilar(vec0, vec2)).toBe(false);
+
+    const rawEval2 = evaluateMudraKinematics(frame2MidActionPose, CANONICAL_MUDRAS.mushti);
+    expect(rawEval2.primaryJointKey).toBe('middle.pip');
+
+    const step2 = stabilizeCoachingEvaluation(
+      rawEval2,
+      frame2MidActionPose,
+      step1.nextAnchor,
+      1400
+    );
+    expect(step2.stabilizedEval.primaryJointKey).toBe('index.pip');
+    expect(step2.stabilizedEval.primaryDirective).toContain('Curl your index finger');
+
+    // 3. Frame 3 (600ms later): user finishes curling index.pip into CORRECT range (92°).
+    // Even before minDwellMs (1400ms) expires, stabilizer immediately releases index.pip and advances to middle.pip!
+    const frame3IndexFixedPose: typeof baseKinematics = {
+      ...frame0Pose,
+      index: { mcp: 78, pip: 92, dip: 65 }, // CORRECT
+      middle: { mcp: 78, pip: 30, dip: 20 }, // still TOO_STRAIGHT
+    };
+    const rawEval3 = evaluateMudraKinematics(frame3IndexFixedPose, CANONICAL_MUDRAS.mushti);
+    const step3 = stabilizeCoachingEvaluation(
+      rawEval3,
+      frame3IndexFixedPose,
+      step2.nextAnchor,
+      1600
+    );
+    expect(step3.stabilizedEval.primaryJointKey).toBe('middle.pip');
+    expect(step3.stabilizedEval.primaryDirective).toBe(
+      'Fold your middle finger firmly into your palm.'
+    );
   });
 
   test('renders updated tolerance legend and optional Developer Diagnostic View with calibration snapshot', async ({
