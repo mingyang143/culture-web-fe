@@ -33,7 +33,11 @@ import {
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStyleToken } from 'themeStyles';
 import useIsMobile from 'utils/isMobile';
-import { CANONICAL_MUDRAS, DEFAULT_MUDRA_ID } from 'data/canonicalMudras';
+import {
+  CANONICAL_MUDRAS,
+  DEFAULT_MUDRA_ID,
+  resolveCanonicalMudraId,
+} from 'data/canonicalMudras';
 import {
   extractHandKinematics,
   resolveHandedness,
@@ -62,29 +66,29 @@ const TEMPORAL_WINDOW_SIZE = 30; // Rolling frame window for temporal variabilit
 
 const SAMPLE_IMAGE_URLS = [
   {
-    label: 'Sample 1: Pataka (Hastalakshana Deepika #1)',
+    label: 'Sample 1: Pathaka (Hastalakshana Deepika #1)',
     url: '/samples/pataka_sample.jpg',
-    mudraId: 'pataka',
+    mudraId: 'pathaka',
   },
   {
-    label: 'Sample 2: Mudrakhya (Hastalakshana Deepika #2)',
+    label: 'Sample 2: Mudrakhyam (Hastalakshana Deepika #2)',
     url: '/samples/mudrakhya_sample.jpg',
-    mudraId: 'mudrakhya',
+    mudraId: 'mudrakhyam',
   },
   {
-    label: 'Sample 3: Kataka / Katakamukha (Hastalakshana Deepika #3)',
+    label: 'Sample 3: Katakam (Hastalakshana Deepika #3)',
     url: '/samples/katakamukha_sample.jpg',
-    mudraId: 'katakamukha',
+    mudraId: 'katakam',
   },
   {
-    label: 'Sample 4: Musti (Hastalakshana Deepika #4)',
+    label: 'Sample 4: Mushti (Hastalakshana Deepika #4)',
     url: '/samples/musti_sample.jpg',
-    mudraId: 'musti',
+    mudraId: 'mushti',
   },
   {
-    label: 'Sample 5: Tripataka (Hastalakshana Deepika #17)',
+    label: 'Sample 5: Thripathaka (Hastalakshana Deepika #17)',
     url: '/samples/tripataka_sample.jpg',
-    mudraId: 'tripataka',
+    mudraId: 'thripathaka',
   },
 ];
 
@@ -133,16 +137,13 @@ const MudraPracticePage: React.FC = () => {
   const { mudraId } = useParams<{ mudraId?: string }>();
   const navigate = useNavigate();
 
-  const [selectedMudraId, setSelectedMudraId] = useState<string>(() => {
-    if (mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]) {
-      return mudraId.toLowerCase();
-    }
-    return DEFAULT_MUDRA_ID;
-  });
+  const [selectedMudraId, setSelectedMudraId] = useState<string>(() =>
+    resolveCanonicalMudraId(mudraId)
+  );
 
   useEffect(() => {
-    if (mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]) {
-      setSelectedMudraId(mudraId.toLowerCase());
+    if (mudraId) {
+      setSelectedMudraId(resolveCanonicalMudraId(mudraId));
     }
   }, [mudraId]);
 
@@ -150,10 +151,7 @@ const MudraPracticePage: React.FC = () => {
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(true);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string>(() => {
-    const initialId =
-      mudraId && CANONICAL_MUDRAS[mudraId.toLowerCase()]
-        ? mudraId.toLowerCase()
-        : DEFAULT_MUDRA_ID;
+    const initialId = resolveCanonicalMudraId(mudraId);
     return CANONICAL_MUDRAS[initialId]?.referenceImageUrl || SAMPLE_IMAGE_URLS[0].url;
   });
   const [evaluationResult, setEvaluationResult] = useState<MudraEvaluationResult | null>(null);

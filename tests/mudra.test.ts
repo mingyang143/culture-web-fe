@@ -11,7 +11,7 @@ import {
   evaluateMudraKinematics,
   computeTemporalFeatureStats,
 } from 'utils/mudraEvaluator';
-import { CANONICAL_MUDRAS } from 'data/canonicalMudras';
+import { CANONICAL_MUDRAS, resolveCanonicalMudraId } from 'data/canonicalMudras';
 
 /**
  * Builds a synthetic 21-point 3D hand in metric world coordinates (meters)
@@ -164,11 +164,19 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(k2.fingerClosure.pinky).toBeCloseTo(k1.fingerClosure.pinky, 5);
   });
 
-  test('handles missing or degenerate worldLandmarks and missing handedness without silent fallback', () => {
+  test('handles missing or degenerate worldLandmarks and resolves legacy mudra route aliases', () => {
     expect(resolveHandedness(undefined)).toBe('Unknown');
     expect(resolveHandedness([])).toBe('Unknown');
     expect(resolveHandedness([{ categoryName: 'Left' }])).toBe('Left');
     expect(resolveHandedness([{ categoryName: 'Right' }])).toBe('Right');
+
+    expect(resolveCanonicalMudraId('pathaka')).toBe('pathaka');
+    expect(resolveCanonicalMudraId('pataka')).toBe('pathaka');
+    expect(resolveCanonicalMudraId('mudrakhya')).toBe('mudrakhyam');
+    expect(resolveCanonicalMudraId('kataka')).toBe('katakam');
+    expect(resolveCanonicalMudraId('katakamukha')).toBe('katakam');
+    expect(resolveCanonicalMudraId('musti')).toBe('mushti');
+    expect(resolveCanonicalMudraId('tripataka')).toBe('thripathaka');
 
     expect(hasValidWorldLandmarks(undefined)).toBe(false);
     expect(hasValidWorldLandmarks([])).toBe(false);
@@ -180,7 +188,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(extractHandKinematics(collapsed)).toBeNull();
 
     // Evaluator returns MEASUREMENT_UNAVAILABLE when kinematics is null
-    const unavailableEval = evaluateMudraKinematics(null, CANONICAL_MUDRAS.musti);
+    const unavailableEval = evaluateMudraKinematics(null, CANONICAL_MUDRAS.mushti);
     expect(unavailableEval.measurementStatus).toBe('MEASUREMENT_UNAVAILABLE');
     expect(unavailableEval.coordinateSource).toBe('unavailable');
     expect(unavailableEval.matchScore).toBe(0);
@@ -193,38 +201,40 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(baseKinematics).not.toBeNull();
     if (!baseKinematics) return;
 
-    // Case 1: Both index.pip (+60° over 90° target) and pinky.pip (+50° over 72° target) are TOO_BENT in Musti.
-    // Musti only has TOO_STRAIGHT rules in pedagogicalRules, so NEITHER primary nor secondary
-    // may falsely match a TOO_STRAIGHT rule ("Curl your pinky tightly into your palm.").
-    const overBentMusti: typeof baseKinematics = {
+    // Case 1: Both index.pip (+65° over 95° target) and pinky.pip (+60° over 92° target) are TOO_BENT in Mushti.
+    // Mushti only has TOO_STRAIGHT rules in pedagogicalRules, so NEITHER primary nor secondary
+    // may falsely match a TOO_STRAIGHT rule ("Curl your pinky finger tightly into your palm.").
+    const overBentMushti: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 32, pip: 50 },
-      index: { mcp: 62, pip: 150, dip: 80 },
-      middle: { mcp: 62, pip: 92, dip: 80 },
-      ring: { mcp: 73, pip: 88, dip: 80 },
-      pinky: { mcp: 62, pip: 122, dip: 80 },
+      thumb: { mcp: 35, pip: 42 },
+      index: { mcp: 78, pip: 160, dip: 80 },
+      middle: { mcp: 78, pip: 95, dip: 80 },
+      ring: { mcp: 75, pip: 95, dip: 80 },
+      pinky: { mcp: 75, pip: 152, dip: 80 },
     };
 
-    const resOverBent = evaluateMudraKinematics(overBentMusti, CANONICAL_MUDRAS.musti);
-    expect(resOverBent.primaryDirective).toContain('Index Middle (PIP) is too bent by ~60°');
+    const resOverBent = evaluateMudraKinematics(overBentMushti, CANONICAL_MUDRAS.mushti);
+    expect(resOverBent.primaryDirective).toContain('Index Middle (PIP) is too bent by ~65°');
     expect(resOverBent.secondaryDirective).toBeDefined();
-    expect(resOverBent.secondaryDirective).toContain('Pinky Knuckle (PIP) is too bent by ~50°');
+    expect(resOverBent.secondaryDirective).toContain('Pinky Knuckle (PIP) is too bent by ~60°');
     expect(resOverBent.secondaryDirective).not.toContain('Curl your pinky');
 
-    // Case 2: Both index.pip (-70° under 90° target) and pinky.pip (-42° under 72° target) are TOO_STRAIGHT.
+    // Case 2: Both index.pip (-75° under 95° target) and pinky.pip (-62° under 92° target) are TOO_STRAIGHT.
     // Both primary and secondary must match their configured TOO_STRAIGHT rules.
-    const underBentMusti: typeof baseKinematics = {
+    const underBentMushti: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 32, pip: 50 },
-      index: { mcp: 62, pip: 20, dip: 10 },
-      middle: { mcp: 62, pip: 92, dip: 80 },
-      ring: { mcp: 73, pip: 88, dip: 80 },
-      pinky: { mcp: 62, pip: 30, dip: 10 },
+      thumb: { mcp: 35, pip: 42 },
+      index: { mcp: 78, pip: 20, dip: 10 },
+      middle: { mcp: 78, pip: 95, dip: 80 },
+      ring: { mcp: 75, pip: 95, dip: 80 },
+      pinky: { mcp: 75, pip: 30, dip: 10 },
     };
 
-    const resUnderBent = evaluateMudraKinematics(underBentMusti, CANONICAL_MUDRAS.musti);
-    expect(resUnderBent.primaryDirective).toBe('Curl your index finger tightly into your palm.');
-    expect(resUnderBent.secondaryDirective).toBe('Curl your pinky tightly into your palm.');
+    const resUnderBent = evaluateMudraKinematics(underBentMushti, CANONICAL_MUDRAS.mushti);
+    expect(resUnderBent.primaryDirective).toBe(
+      'Curl your index finger tightly into your palm to form a closed fist.'
+    );
+    expect(resUnderBent.secondaryDirective).toBe('Curl your pinky finger tightly into your palm.');
   });
 
   test('evaluates all configured spread targets (spreadIndexMiddle, spreadMiddleRing, spreadRingPinky)', () => {
@@ -232,20 +242,23 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(baseKinematics).not.toBeNull();
     if (!baseKinematics) return;
 
-    const wideRingPinkyPataka: typeof baseKinematics = {
+    const wideSpreadThripathaka: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 18, pip: 16 },
-      index: { mcp: 22, pip: 9, dip: 5 },
-      middle: { mcp: 12, pip: 25, dip: 5 },
-      ring: { mcp: 33, pip: 55, dip: 5 },
-      pinky: { mcp: 21, pip: 23, dip: 5 },
-      spreadIndexMiddle: 6,
-      spreadMiddleRing: 51, // +22° above target 29° (tolerance 18°)
-      spreadRingPinky: 58, // +30° above target 28° (tolerance 18°)
+      thumb: { mcp: 26, pip: 38 },
+      index: { mcp: 12, pip: 16, dip: 5 },
+      middle: { mcp: 10, pip: 16, dip: 5 },
+      ring: { mcp: 12, pip: 18, dip: 5 },
+      pinky: { mcp: 12, pip: 16, dip: 5 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 30, // +22° above target 8° (tolerance 12°)
+      spreadRingPinky: 40, // +30° above target 10° (tolerance 12°)
     };
 
-    const evalPataka = evaluateMudraKinematics(wideRingPinkyPataka, CANONICAL_MUDRAS.pataka);
-    const spreadKeys = evalPataka.jointEvaluations
+    const evalThripathaka = evaluateMudraKinematics(
+      wideSpreadThripathaka,
+      CANONICAL_MUDRAS.thripathaka
+    );
+    const spreadKeys = evalThripathaka.jointEvaluations
       .filter((j) => j.jointKey.startsWith('spread'))
       .map((j) => j.jointKey);
 
@@ -254,51 +267,168 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       'spreadMiddleRing',
       'spreadRingPinky',
     ]);
-    expect(evalPataka.isMastered).toBe(false);
-    expect(evalPataka.primaryDirective).toContain('Ring-Pinky Gap is too wide by ~30°');
-    expect(evalPataka.secondaryDirective).toContain('Middle-Ring Gap is too wide by ~22°');
+    expect(evalThripathaka.isMastered).toBe(false);
+    expect(evalThripathaka.primaryDirective).toContain('Ring-Pinky Gap is too wide by ~30°');
+    expect(evalThripathaka.secondaryDirective).toContain('Middle-Ring Gap is too wide by ~22°');
   });
 
-  test('gates mastery via signature joints (weight >= 2.0) and validates empirical Musti 3D worldLandmarks targets', () => {
+  test('validates Kathakali Pathaka (#1), Mudrakhyam (#2), Katakam (#3), Mushti (#4), and Thripathaka (#17) with cross-mudra disambiguation', () => {
     const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
     expect(baseKinematics).not.toBeNull();
     if (!baseKinematics) return;
 
-    // 1. Empirical mean 3D worldLandmarks posture from KathakaliMudraDataset 4.mushti (n=37)
-    const empiricalMusti: typeof baseKinematics = {
+    // 1. Pathaka (#1): ring finger bent forward, index/middle/pinky straight
+    const pathakaPose: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 31.8, pip: 50.4 },
-      index: { mcp: 61.2, pip: 89.7, dip: 70 },
-      middle: { mcp: 62.1, pip: 93.6, dip: 72 },
-      ring: { mcp: 73.1, pip: 89.2, dip: 70 },
-      pinky: { mcp: 61.6, pip: 72.1, dip: 65 },
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
     };
-    const mustiEval = evaluateMudraKinematics(empiricalMusti, CANONICAL_MUDRAS.musti);
-    expect(mustiEval.isMastered).toBe(true);
-    expect(mustiEval.matchScore).toBeGreaterThanOrEqual(95);
+    const pathakaEval = evaluateMudraKinematics(pathakaPose, CANONICAL_MUDRAS.pathaka);
+    expect(pathakaEval.isMastered).toBe(true);
+    expect(pathakaEval.matchScore).toBe(100);
 
-    // 2. Signature-joint gate: Pataka requires ring.pip ~55° ± 24° (weight 2.2).
-    // If ring.pip is held straight at 16° (as in Tripataka) while all other joints match Pataka perfectly,
-    // signature-joint gating must cap matchScore <= 84 and prevent false mastery.
-    const straightRingInPataka: typeof baseKinematics = {
-      ...baseKinematics,
-      thumb: { mcp: 18, pip: 16 },
-      index: { mcp: 22, pip: 9, dip: 5 },
-      middle: { mcp: 12, pip: 25, dip: 5 },
-      ring: { mcp: 33, pip: 16, dip: 5 }, // delta = -39° (> 24° * 1.2 = 28.8°)
-      pinky: { mcp: 21, pip: 23, dip: 5 },
-      spreadIndexMiddle: 6,
-      spreadMiddleRing: 29,
-      spreadRingPinky: 28,
-    };
-    const patakaSignatureFail = evaluateMudraKinematics(
-      straightRingInPataka,
-      CANONICAL_MUDRAS.pataka
+    // Pathaka pose must NOT pass as Thripathaka (#17)
+    const pathakaAsThripathaka = evaluateMudraKinematics(
+      pathakaPose,
+      CANONICAL_MUDRAS.thripathaka
     );
-    expect(patakaSignatureFail.isMastered).toBe(false);
-    expect(patakaSignatureFail.matchScore).toBeLessThanOrEqual(84);
-    expect(patakaSignatureFail.primaryDirective).toContain(
-      'Bend your ring finger inward toward the palm'
+    expect(pathakaAsThripathaka.isMastered).toBe(false);
+    expect(pathakaAsThripathaka.primaryDirective).toContain(
+      'Keep your ring finger completely straight for Kathakali Thripathaka'
+    );
+
+    // 2. Thripathaka (#17): all 4 fingers straight, thumb bent inward
+    const thripathakaPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 28, pip: 39 },
+      index: { mcp: 10, pip: 16, dip: 13 },
+      middle: { mcp: 7, pip: 16, dip: 9 },
+      ring: { mcp: 8, pip: 19, dip: 8 },
+      pinky: { mcp: 11, pip: 16, dip: 9 },
+      spreadIndexMiddle: 7,
+      spreadMiddleRing: 7,
+      spreadRingPinky: 11,
+    };
+    const thripathakaEval = evaluateMudraKinematics(
+      thripathakaPose,
+      CANONICAL_MUDRAS.thripathaka
+    );
+    expect(thripathakaEval.isMastered).toBe(true);
+    expect(thripathakaEval.matchScore).toBe(100);
+
+    // Thripathaka pose must NOT pass as Pathaka (#1)
+    const thripathakaAsPathaka = evaluateMudraKinematics(
+      thripathakaPose,
+      CANONICAL_MUDRAS.pathaka
+    );
+    expect(thripathakaAsPathaka.isMastered).toBe(false);
+    expect(thripathakaAsPathaka.matchScore).toBeLessThanOrEqual(84);
+    expect(thripathakaAsPathaka.primaryDirective).toContain(
+      'In Kathakali Pathaka (#1), bend your ring finger forward'
+    );
+
+    // 3. Mudrakhyam (#2): thumb + index tips pinched, middle/ring/pinky straight
+    const mudrakhyamPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 21, pip: 15 },
+      index: { mcp: 55, pip: 61, dip: 33 },
+      middle: { mcp: 19, pip: 20, dip: 14 },
+      ring: { mcp: 22, pip: 19, dip: 9 },
+      pinky: { mcp: 23, pip: 16, dip: 11 },
+      tipDistances: {
+        ...baseKinematics.tipDistances,
+        thumbIndex: 0.31,
+      },
+    };
+    const mudrakhyamEval = evaluateMudraKinematics(
+      mudrakhyamPose,
+      CANONICAL_MUDRAS.mudrakhyam
+    );
+    expect(mudrakhyamEval.isMastered).toBe(true);
+    expect(mudrakhyamEval.matchScore).toBe(100);
+
+    // Mudrakhyam pose must NOT pass as Katakam (#3) because middle finger is straight
+    const mudrakhyamAsKatakam = evaluateMudraKinematics(
+      mudrakhyamPose,
+      CANONICAL_MUDRAS.katakam
+    );
+    expect(mudrakhyamAsKatakam.isMastered).toBe(false);
+    expect(mudrakhyamAsKatakam.primaryDirective).toContain(
+      'Fold your middle finger completely down onto the center of your palm'
+    );
+
+    // 4. Katakam (#3): upright pose (index tip touching upright thumb tip, middle folded into palm, ring & pinky straight up)
+    const uprightKatakamPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 22, pip: 18 },
+      index: { mcp: 45, pip: 65, dip: 25 },
+      middle: { mcp: 70, pip: 82, dip: 45 },
+      ring: { mcp: 18, pip: 15, dip: 10 },
+      pinky: { mcp: 18, pip: 15, dip: 10 },
+      spreadRingPinky: 12,
+      tipDistances: {
+        ...baseKinematics.tipDistances,
+        thumbIndex: 0.38,
+        thumbMiddle: 0.95, // middle finger folded onto palm, not touching thumb
+      },
+    };
+    const uprightKatakamEval = evaluateMudraKinematics(
+      uprightKatakamPose,
+      CANONICAL_MUDRAS.katakam
+    );
+    expect(uprightKatakamEval.isMastered).toBe(true);
+    expect(uprightKatakamEval.matchScore).toBe(100);
+
+    // Katakam (#3) horizontal dataset sample (katakamukha_sample.jpg / 3.kataka.jpg) also masters
+    const sampleKatakamPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 29, pip: 21 },
+      index: { mcp: 43, pip: 66, dip: 20 },
+      middle: { mcp: 67, pip: 67, dip: 29 },
+      ring: { mcp: 55, pip: 21, dip: 10 },
+      pinky: { mcp: 23, pip: 14, dip: 12 },
+      spreadRingPinky: 55,
+      tipDistances: {
+        ...baseKinematics.tipDistances,
+        thumbIndex: 0.41,
+      },
+    };
+    const sampleKatakamEval = evaluateMudraKinematics(
+      sampleKatakamPose,
+      CANONICAL_MUDRAS.katakam
+    );
+    expect(sampleKatakamEval.isMastered).toBe(true);
+    expect(sampleKatakamEval.matchScore).toBe(100);
+
+    // 5. Mushti (#4): closed fist (both sample flexion ~85° and tight webcam flexion ~120°)
+    const sampleMushtiPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 36, pip: 41 },
+      index: { mcp: 81, pip: 81, dip: 53 },
+      middle: { mcp: 80, pip: 91, dip: 68 },
+      ring: { mcp: 74, pip: 90, dip: 62 },
+      pinky: { mcp: 77, pip: 85, dip: 49 },
+    };
+    expect(evaluateMudraKinematics(sampleMushtiPose, CANONICAL_MUDRAS.mushti).isMastered).toBe(
+      true
+    );
+
+    const tightMushtiPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 40, pip: 50 },
+      index: { mcp: 85, pip: 120, dip: 75 },
+      middle: { mcp: 85, pip: 122, dip: 75 },
+      ring: { mcp: 80, pip: 120, dip: 75 },
+      pinky: { mcp: 80, pip: 118, dip: 70 },
+    };
+    expect(evaluateMudraKinematics(tightMushtiPose, CANONICAL_MUDRAS.mushti).isMastered).toBe(
+      true
     );
   });
 
@@ -314,6 +444,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
   test('renders updated tolerance legend and optional Developer Diagnostic View with calibration snapshot', async ({
     page,
   }) => {
+    // Verify legacy route slug 'musti' resolves to canonical 'mushti'
     await page.goto('/learn/mudras/practice/musti');
 
     await expect(
@@ -333,7 +464,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
     const snapshotPre = page.getByTestId('calibration-snapshot-json');
     await expect(snapshotPre).toBeVisible();
-    await expect(snapshotPre).toContainText('"mudraId": "musti"');
+    await expect(snapshotPre).toContainText('"mudraId": "mushti"');
+    await expect(snapshotPre).toContainText('"mudraName": "Mushti"');
   });
 });
-
