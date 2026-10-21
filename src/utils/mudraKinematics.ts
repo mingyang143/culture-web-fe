@@ -326,3 +326,104 @@ export function extractHandKinematics(
     palmNormal,
   };
 }
+
+/**
+ * Applies a frame-rate-aware Exponential Moving Average (EMA) temporal filter to live
+ * 3D HandKinematics to suppress high-frequency monocular depth jitter while preserving
+ * fast step response to genuine finger movements.
+ *
+ * - Base smoothing: `alpha = 1 - exp(-dtMs / 65)` when `dtMs` is supplied (≈0.40 at 30 FPS,
+ *   ≈0.23 at 60 FPS, ≈0.64 at 15 FPS), or `alpha` directly (default 0.40).
+ * - Step responsiveness (unit-specific):
+ *   • Angular features (`deg`): step changes > 10° use `max(baseAlpha, 0.70)`.
+ *   • Normalized distance features (`palmRatio` / meters): step changes > 0.08 use `max(baseAlpha, 0.70)`.
+ * - Resets immediately if `prev` is null, `current` is null, or `handedness` changes.
+ */
+export function smoothHandKinematics(
+  prev: HandKinematics | null | undefined,
+  current: HandKinematics | null | undefined,
+  alpha = 0.4,
+  dtMs = 0
+): HandKinematics | null {
+  if (!current) return null;
+  if (!prev || prev.handedness !== current.handedness) {
+    return current;
+  }
+
+  const timeAdaptedAlpha =
+    typeof dtMs === 'number' && Number.isFinite(dtMs) && dtMs > 0
+      ? 1 - Math.exp(-Math.min(dtMs, 200) / 65)
+      : alpha;
+  const baseAlpha = Math.max(0.05, Math.min(1.0, timeAdaptedAlpha));
+
+  const blendAngle = (prevDeg: number, currDeg: number): number => {
+    if (!Number.isFinite(prevDeg) || !Number.isFinite(currDeg)) return currDeg;
+    const stepDeg = Math.abs(currDeg - prevDeg);
+    const effAlpha = stepDeg > 10.0 ? Math.max(baseAlpha, 0.7) : baseAlpha;
+    return prevDeg + effAlpha * (currDeg - prevDeg);
+  };
+
+  const blendAngleOpt = (
+    prevDeg: number | undefined,
+    currDeg: number | undefined
+  ): number | undefined => (currDeg !== undefined ? blendAngle(prevDeg ?? currDeg, currDeg) : undefined);
+
+  const blendDistance = (prevDist: number, currDist: number): number => {
+    if (!Number.isFinite(prevDist) || !Number.isFinite(currDist)) return currDist;
+    const stepDist = Math.abs(currDist - prevDist);
+    const effAlpha = stepDist > 0.08 ? Math.max(baseAlpha, 0.7) : baseAlpha;
+    return prevDist + effAlpha * (currDist - prevDist);
+  };
+
+  return {
+    coordinateSource: 'worldLandmarks',
+    handedness: current.handedness,
+    palmScaleMeters: blendDistance(prev.palmScaleMeters, current.palmScaleMeters),
+    palmWidthMeters: blendDistance(prev.palmWidthMeters, current.palmWidthMeters),
+    thumb: {
+      mcp: blendAngle(prev.thumb.mcp, current.thumb.mcp),
+      pip: blendAngle(prev.thumb.pip, current.thumb.pip),
+    },
+    index: {
+      mcp: blendAngle(prev.index.mcp, current.index.mcp),
+      pip: blendAngle(prev.index.pip, current.index.pip),
+      dip: blendAngleOpt(prev.index.dip, current.index.dip),
+    },
+    middle: {
+      mcp: blendAngle(prev.middle.mcp, current.middle.mcp),
+      pip: blendAngle(prev.middle.pip, current.middle.pip),
+      dip: blendAngleOpt(prev.middle.dip, current.middle.dip),
+    },
+    ring: {
+      mcp: blendAngle(prev.ring.mcp, current.ring.mcp),
+      pip: blendAngle(prev.ring.pip, current.ring.pip),
+      dip: blendAngleOpt(prev.ring.dip, current.ring.dip),
+    },
+    pinky: {
+      mcp: blendAngle(prev.pinky.mcp, current.pinky.mcp),
+      pip: blendAngle(prev.pinky.pip, current.pinky.pip),
+      dip: blendAngleOpt(prev.pinky.dip, current.pinky.dip),
+    },
+    spreadThumbIndex: blendAngle(prev.spreadThumbIndex, current.spreadThumbIndex),
+    spreadIndexMiddle: blendAngle(prev.spreadIndexMiddle, current.spreadIndexMiddle),
+    spreadMiddleRing: blendAngle(prev.spreadMiddleRing, current.spreadMiddleRing),
+    spreadRingPinky: blendAngle(prev.spreadRingPinky, current.spreadRingPinky),
+    tipDistances: {
+      thumbIndex: blendDistance(prev.tipDistances.thumbIndex, current.tipDistances.thumbIndex),
+      thumbMiddle: blendDistance(prev.tipDistances.thumbMiddle, current.tipDistances.thumbMiddle),
+      thumbRing: blendDistance(prev.tipDistances.thumbRing, current.tipDistances.thumbRing),
+      thumbPinky: blendDistance(prev.tipDistances.thumbPinky, current.tipDistances.thumbPinky),
+    },
+    fingerClosure: {
+      index: blendDistance(prev.fingerClosure.index, current.fingerClosure.index),
+      middle: blendDistance(prev.fingerClosure.middle, current.fingerClosure.middle),
+      ring: blendDistance(prev.fingerClosure.ring, current.fingerClosure.ring),
+      pinky: blendDistance(prev.fingerClosure.pinky, current.fingerClosure.pinky),
+    },
+    palmNormal: normalizeVector({
+      x: blendDistance(prev.palmNormal.x, current.palmNormal.x),
+      y: blendDistance(prev.palmNormal.y, current.palmNormal.y),
+      z: blendDistance(prev.palmNormal.z, current.palmNormal.z),
+    }),
+  };
+}

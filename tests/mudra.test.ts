@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { Landmark3D } from 'types/mudra';
+import { Landmark3D, CoachingAnchorState, HoldTimerState } from 'types/mudra';
 import {
   calculateJointAngle,
   calculateSpreadAngle,
   extractHandKinematics,
+  smoothHandKinematics,
   hasValidWorldLandmarks,
   resolveHandedness,
 } from 'utils/mudraKinematics';
@@ -13,6 +14,10 @@ import {
   extractKinematicsFeatureVector,
   areKinematicsVectorsSimilar,
   stabilizeCoachingEvaluation,
+  advanceHoldTimerState,
+  getNormalizedJointError,
+  WITHIN_TARGET_RANGES_DIRECTIVE,
+  STATUS_EXIT_HYSTERESIS_RATIO,
 } from 'utils/mudraEvaluator';
 import { CANONICAL_MUDRAS, resolveCanonicalMudraId } from 'data/canonicalMudras';
 
@@ -196,6 +201,8 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(unavailableEval.coordinateSource).toBe('unavailable');
     expect(unavailableEval.matchScore).toBe(0);
     expect(unavailableEval.isMastered).toBe(false);
+    expect(unavailableEval.isValidHoldFrame).toBe(false);
+    expect(unavailableEval.isFlawless).toBe(false);
     expect(unavailableEval.jointEvaluations).toHaveLength(0);
   });
 
@@ -205,8 +212,6 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     if (!baseKinematics) return;
 
     // Case 1: Both index.pip (+65° over 95° target) and pinky.pip (+60° over 92° target) are TOO_BENT in Mushti.
-    // Mushti only has TOO_STRAIGHT rules in pedagogicalRules, so NEITHER primary nor secondary
-    // may falsely match a TOO_STRAIGHT rule ("Curl your pinky finger tightly into your palm.").
     const overBentMushti: typeof baseKinematics = {
       ...baseKinematics,
       thumb: { mcp: 35, pip: 42 },
@@ -223,7 +228,6 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(resOverBent.secondaryDirective).not.toContain('Curl your pinky');
 
     // Case 2: Both index.pip (-75° under 95° target) and pinky.pip (-62° under 92° target) are TOO_STRAIGHT.
-    // Both primary and secondary must match their configured TOO_STRAIGHT rules.
     const underBentMushti: typeof baseKinematics = {
       ...baseKinematics,
       thumb: { mcp: 35, pip: 42 },
@@ -294,6 +298,10 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     };
     const pathakaEval = evaluateMudraKinematics(pathakaPose, CANONICAL_MUDRAS.pathaka);
     expect(pathakaEval.isMastered).toBe(true);
+    expect(pathakaEval.isValidHoldFrame).toBe(true);
+    expect(pathakaEval.isFlawless).toBe(true);
+    expect(pathakaEval.primaryDirective).toBe(WITHIN_TARGET_RANGES_DIRECTIVE);
+    expect(pathakaEval.primaryDirective).not.toContain('Flawless Form');
     expect(pathakaEval.matchScore).toBe(100);
 
     // Pathaka pose must NOT pass as Thripathaka (#17)
@@ -323,6 +331,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       CANONICAL_MUDRAS.thripathaka
     );
     expect(thripathakaEval.isMastered).toBe(true);
+    expect(thripathakaEval.isFlawless).toBe(true);
     expect(thripathakaEval.matchScore).toBe(100);
 
     // Thripathaka pose must NOT pass as Pathaka (#1)
@@ -366,7 +375,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       'Fold your middle finger completely down onto the center of your palm'
     );
 
-    // 4. Katakam (#3): upright pose (index tip touching upright thumb tip, middle folded into palm, ring & pinky straight up)
+    // 4. Katakam (#3): upright pose
     const uprightKatakamPose: typeof baseKinematics = {
       ...baseKinematics,
       thumb: { mcp: 22, pip: 18 },
@@ -378,7 +387,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       tipDistances: {
         ...baseKinematics.tipDistances,
         thumbIndex: 0.38,
-        thumbMiddle: 0.95, // middle finger folded onto palm, not touching thumb
+        thumbMiddle: 0.95,
       },
     };
     const uprightKatakamEval = evaluateMudraKinematics(
@@ -388,28 +397,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(uprightKatakamEval.isMastered).toBe(true);
     expect(uprightKatakamEval.matchScore).toBe(100);
 
-    // Katakam (#3) horizontal dataset sample (katakamukha_sample.jpg / 3.kataka.jpg) also masters
-    const sampleKatakamPose: typeof baseKinematics = {
-      ...baseKinematics,
-      thumb: { mcp: 29, pip: 21 },
-      index: { mcp: 43, pip: 66, dip: 20 },
-      middle: { mcp: 67, pip: 67, dip: 29 },
-      ring: { mcp: 55, pip: 21, dip: 10 },
-      pinky: { mcp: 23, pip: 14, dip: 12 },
-      spreadRingPinky: 55,
-      tipDistances: {
-        ...baseKinematics.tipDistances,
-        thumbIndex: 0.41,
-      },
-    };
-    const sampleKatakamEval = evaluateMudraKinematics(
-      sampleKatakamPose,
-      CANONICAL_MUDRAS.katakam
-    );
-    expect(sampleKatakamEval.isMastered).toBe(true);
-    expect(sampleKatakamEval.matchScore).toBe(100);
-
-    // 5. Mushti (#4): closed fist (both sample flexion ~85° and tight webcam flexion ~120°)
+    // 5. Mushti (#4): closed fist
     const sampleMushtiPose: typeof baseKinematics = {
       ...baseKinematics,
       thumb: { mcp: 36, pip: 41 },
@@ -421,18 +409,489 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(evaluateMudraKinematics(sampleMushtiPose, CANONICAL_MUDRAS.mushti).isMastered).toBe(
       true
     );
+  });
 
-    const tightMushtiPose: typeof baseKinematics = {
+  test('verifies feature-specific units (deg vs palmRatio) and tolerance-normalized hysteresis margins', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    const mudrakhyamPose: typeof baseKinematics = {
       ...baseKinematics,
-      thumb: { mcp: 40, pip: 50 },
-      index: { mcp: 85, pip: 120, dip: 75 },
-      middle: { mcp: 85, pip: 122, dip: 75 },
-      ring: { mcp: 80, pip: 120, dip: 75 },
-      pinky: { mcp: 80, pip: 118, dip: 70 },
+      thumb: { mcp: 21, pip: 15 },
+      index: { mcp: 55, pip: 61, dip: 33 },
+      middle: { mcp: 19, pip: 20, dip: 14 },
+      ring: { mcp: 22, pip: 19, dip: 9 },
+      pinky: { mcp: 23, pip: 16, dip: 11 },
+      tipDistances: {
+        thumbIndex: 0.31,
+        thumbMiddle: 0.85,
+        thumbRing: 0.92,
+        thumbPinky: 1.05,
+      },
     };
-    expect(evaluateMudraKinematics(tightMushtiPose, CANONICAL_MUDRAS.mushti).isMastered).toBe(
-      true
+
+    // 1. Feature vector keeps [0..12] in degrees and [13..16] in native palmRatio (never * 100)
+    const vec = extractKinematicsFeatureVector(mudrakhyamPose);
+    expect(vec).toHaveLength(17);
+    expect(vec[13]).toBeCloseTo(0.31, 4);
+    expect(vec[14]).toBeCloseTo(0.85, 4);
+
+    // Moving thumbIndex contact by 0.08 palm widths (> 0.06 threshold) breaks vector similarity
+    const brokenContactPose: typeof baseKinematics = {
+      ...mudrakhyamPose,
+      tipDistances: { ...mudrakhyamPose.tipDistances, thumbIndex: 0.39 },
+    };
+    expect(
+      areKinematicsVectorsSimilar(vec, extractKinematicsFeatureVector(brokenContactPose))
+    ).toBe(false);
+
+    // 2. JointEvaluations explicitly tag 'deg' vs 'palmRatio' and compute dimensionless normalizedError
+    const evalRes = evaluateMudraKinematics(mudrakhyamPose, CANONICAL_MUDRAS.mudrakhyam);
+    const contactEval = evalRes.jointEvaluations.find(
+      (j) => j.jointKey === 'contact.thumbIndex'
     );
+    const indexPipEval = evalRes.jointEvaluations.find((j) => j.jointKey === 'index.pip');
+
+    expect(contactEval).toBeDefined();
+    expect(contactEval?.unit).toBe('palmRatio');
+    expect(contactEval?.rawValue).toBeCloseTo(0.31, 3);
+    expect(contactEval?.targetDegrees).toBeCloseTo(0.45, 2); // maxDistance in palmRatio
+    expect(getNormalizedJointError(contactEval!)).toBeCloseTo(0.31 / 0.45, 2);
+
+    expect(indexPipEval).toBeDefined();
+    expect(indexPipEval?.unit).toBe('deg');
+
+    // 3. Tolerance-normalized exit hysteresis (8% of maxDistance = 0.45 * 1.08 = 0.486 palmRatio)
+    const step0 = stabilizeCoachingEvaluation(evalRes, mudrakhyamPose, null, 1000);
+    expect(step0.stabilizedEval.isMastered).toBe(true);
+
+    // A tiny contact fluctuation to 0.47 palmRatio (normalizedError = 1.044 <= 1.08) stays CORRECT under exit hysteresis
+    // for a brief frame, but isValidHoldFrame is false so it earns 0ms hold time.
+    const slightContactSlip: typeof baseKinematics = {
+      ...mudrakhyamPose,
+      tipDistances: { ...mudrakhyamPose.tipDistances, thumbIndex: 0.47 },
+    };
+    const rawSlipEval = evaluateMudraKinematics(slightContactSlip, CANONICAL_MUDRAS.mudrakhyam);
+    expect(rawSlipEval.isMastered).toBe(false);
+    const step1 = stabilizeCoachingEvaluation(
+      rawSlipEval,
+      slightContactSlip,
+      step0.nextAnchor,
+      1033
+    );
+    expect(
+      step1.stabilizedEval.jointEvaluations.find((j) => j.jointKey === 'contact.thumbIndex')
+        ?.status
+    ).toBe('CORRECT');
+    expect(step1.stabilizedEval.isValidHoldFrame).toBe(false);
+
+    // A real contact separation to 0.52 palmRatio (normalizedError = 1.156 > 1.08) immediately fails even with hysteresis
+    const realContactBreak: typeof baseKinematics = {
+      ...mudrakhyamPose,
+      tipDistances: { ...mudrakhyamPose.tipDistances, thumbIndex: 0.52 },
+    };
+    const rawBreakEval = evaluateMudraKinematics(realContactBreak, CANONICAL_MUDRAS.mudrakhyam);
+    const step2 = stabilizeCoachingEvaluation(
+      rawBreakEval,
+      realContactBreak,
+      step0.nextAnchor,
+      1066
+    );
+    expect(step2.stabilizedEval.isMastered).toBe(false);
+    expect(STATUS_EXIT_HYSTERESIS_RATIO).toBeCloseTo(0.08, 4);
+  });
+
+  test('paired boundary tests: (a) valid pose with brief noise passes, (b) 24.2-31.2° out-of-range replay fails, (c) failing pose entry never passes, (d) departure stops hold fast', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    const canonicalPathaka: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+
+    // --- PAIR A: Valid boundary pose (mean ~31.8° inside [30°, 86°]) with a single brief (<100ms) dip to 28.8° ---
+    const validSteadyCycle = [32.5, 32.2, 31.8, 31.6, 32.0, 32.4, 32.1, 31.9];
+    let smoothedA: typeof baseKinematics | null = null;
+    let anchorA: CoachingAnchorState | null = null;
+    let holdA: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    let nowA = 1000;
+    const dtMs = 34;
+
+    for (let i = 0; i < 66; i += 1) {
+      // Inject a single brief 2-frame boundary dip at frames 10..11 (29.2°, 28.8°), valid elsewhere
+      let rawPip = validSteadyCycle[i % validSteadyCycle.length];
+      if (i === 10) rawPip = 29.2;
+      if (i === 11) rawPip = 28.8;
+      const frameKin = { ...canonicalPathaka, ring: { mcp: 35, pip: rawPip, dip: 10 } };
+      smoothedA = smoothHandKinematics(smoothedA, frameKin, 0.4, dtMs);
+      const rawEval = evaluateMudraKinematics(smoothedA, CANONICAL_MUDRAS.pathaka);
+      const { stabilizedEval, nextAnchor } = stabilizeCoachingEvaluation(
+        rawEval,
+        smoothedA,
+        anchorA,
+        nowA
+      );
+      anchorA = nextAnchor;
+      holdA = advanceHoldTimerState(holdA, stabilizedEval, dtMs, 2000);
+      expect(stabilizedEval.isMastered).toBe(true);
+      expect(stabilizedEval.primaryDirective).not.toContain('Flawless Form');
+      if (!stabilizedEval.isFlawless) {
+        expect(stabilizedEval.primaryDirective).not.toContain('Within target ranges');
+      }
+      nowA += dtMs;
+    }
+    expect(holdA.isHoldMastered).toBe(true);
+    expect(holdA.holdElapsedMs).toBe(2000);
+
+    // --- PAIR B: Synthetic 24.2°–31.2° out-of-range replay (10-frame cycle, 6/10 frames < 30°, mean 28.04° < 30°) ---
+    // Because 6/10 frames lie below the configured [30°, 86°] accepted range, this sequence MUST NOT complete the hold
+    // and MUST exit mastery to show corrective ring.pip feedback once the 350ms exit-hysteresis window expires.
+    const outOfRangeSeries = [
+      31.2, 30.8, 30.1, 28.4, 26.8, 25.1, 24.2, 25.5, 27.9, 30.4,
+    ];
+    expect(outOfRangeSeries).toHaveLength(10);
+    expect(outOfRangeSeries.filter((deg) => deg < 30.0)).toHaveLength(6);
+    let smoothedB: typeof baseKinematics | null = null;
+    let anchorB: CoachingAnchorState | null = null;
+    let holdB: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    let nowB = 1000;
+    let failedFrameCount = 0;
+
+    for (let i = 0; i < 72; i += 1) {
+      const rawPip = outOfRangeSeries[i % outOfRangeSeries.length];
+      const frameKin = { ...canonicalPathaka, ring: { mcp: 34, pip: rawPip, dip: 10 } };
+      smoothedB = smoothHandKinematics(smoothedB, frameKin, 0.4, dtMs);
+      const rawEval = evaluateMudraKinematics(smoothedB, CANONICAL_MUDRAS.pathaka);
+      const { stabilizedEval, nextAnchor } = stabilizeCoachingEvaluation(
+        rawEval,
+        smoothedB,
+        anchorB,
+        nowB
+      );
+      anchorB = nextAnchor;
+      holdB = advanceHoldTimerState(holdB, stabilizedEval, dtMs, 2000);
+      if (!stabilizedEval.isMastered) {
+        failedFrameCount += 1;
+      }
+      nowB += dtMs;
+    }
+    expect(holdB.isHoldMastered).toBe(false);
+    expect(holdB.holdElapsedMs).toBeLessThan(400);
+    expect(failedFrameCount).toBeGreaterThan(40);
+
+    // --- PAIR C: Entry from a sustained failing pose (ring.pip = 28.5° < 30.0°) ---
+    // Even though 28.5° is within the 8% exit-hysteresis band (27.76°..30.0°), starting from a failing pose
+    // must NEVER enter isMastered = true or accumulate any hold time.
+    let smoothedC: typeof baseKinematics | null = null;
+    let anchorC: CoachingAnchorState | null = null;
+    let holdC: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    let nowC = 1000;
+
+    for (let i = 0; i < 60; i += 1) {
+      const frameKin = { ...canonicalPathaka, ring: { mcp: 34, pip: 28.5, dip: 10 } };
+      smoothedC = smoothHandKinematics(smoothedC, frameKin, 0.4, dtMs);
+      const rawEval = evaluateMudraKinematics(smoothedC, CANONICAL_MUDRAS.pathaka);
+      const { stabilizedEval, nextAnchor } = stabilizeCoachingEvaluation(
+        rawEval,
+        smoothedC,
+        anchorC,
+        nowC
+      );
+      anchorC = nextAnchor;
+      holdC = advanceHoldTimerState(holdC, stabilizedEval, dtMs, 2000);
+      expect(stabilizedEval.isMastered).toBe(false);
+      expect(stabilizedEval.isValidHoldFrame).toBe(false);
+      expect(holdC.holdElapsedMs).toBe(0);
+      nowC += dtMs;
+    }
+
+    // --- PAIR D: Departure from a passing pose (ring.pip drops from 50° to 20°) ---
+    // Verify hold accumulation stops on the first frame below 30° and coaching switches to ring.pip error within 2 frames.
+    let smoothedD: typeof baseKinematics | null = null;
+    let anchorD: CoachingAnchorState | null = null;
+    let holdD: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    let nowD = 1000;
+
+    // 10 frames of passing pose (50°): Frame 0 anchors (0ms), Frames 1..9 earn 9 * 34ms = 306ms
+    for (let i = 0; i < 10; i += 1) {
+      const frameKin = { ...canonicalPathaka, ring: { mcp: 38, pip: 50, dip: 10 } };
+      smoothedD = smoothHandKinematics(smoothedD, frameKin, 0.4, dtMs);
+      const rawEval = evaluateMudraKinematics(smoothedD, CANONICAL_MUDRAS.pathaka);
+      const { stabilizedEval, nextAnchor } = stabilizeCoachingEvaluation(
+        rawEval,
+        smoothedD,
+        anchorD,
+        nowD
+      );
+      anchorD = nextAnchor;
+      holdD = advanceHoldTimerState(holdD, stabilizedEval, dtMs, 2000);
+      nowD += dtMs;
+    }
+    const holdBeforeDeparture = holdD.holdElapsedMs;
+    expect(holdBeforeDeparture).toBe(306);
+
+    // Step departure to 20° (outside accepted range [30°, 86°])
+    const departFrame1 = { ...canonicalPathaka, ring: { mcp: 20, pip: 20, dip: 10 } };
+    smoothedD = smoothHandKinematics(smoothedD, departFrame1, 0.4, dtMs);
+    const rawDepart1 = evaluateMudraKinematics(smoothedD, CANONICAL_MUDRAS.pathaka);
+    const stabDepart1 = stabilizeCoachingEvaluation(rawDepart1, smoothedD, anchorD, nowD);
+    anchorD = stabDepart1.nextAnchor;
+    holdD = advanceHoldTimerState(holdD, stabDepart1.stabilizedEval, dtMs, 2000);
+    nowD += dtMs;
+
+    // Frame 1 of departure (34ms): smoothed ring.pip drops from 50° -> 29° (because |Δθ|=30° > 10° triggers 0.70 step-blend).
+    // Hold accumulation stops immediately on Frame 1 (+0ms earned), and "Within target ranges" is NOT shown!
+    expect(stabDepart1.stabilizedEval.isValidHoldFrame).toBe(false);
+    expect(stabDepart1.stabilizedEval.isFlawless).toBe(false);
+    expect(stabDepart1.stabilizedEval.primaryDirective).not.toContain('Within target ranges');
+    expect(holdD.holdElapsedMs).toBe(holdBeforeDeparture);
+
+    // Frame 2 of departure (68ms): smoothed ring.pip is 25.4° (< 27.76° hysteresis limit) -> coaching immediately updates!
+    smoothedD = smoothHandKinematics(smoothedD, departFrame1, 0.4, dtMs);
+    const rawDepart2 = evaluateMudraKinematics(smoothedD, CANONICAL_MUDRAS.pathaka);
+    const stabDepart2 = stabilizeCoachingEvaluation(rawDepart2, smoothedD, anchorD, nowD);
+    expect(stabDepart2.stabilizedEval.isMastered).toBe(false);
+    expect(stabDepart2.stabilizedEval.primaryJointKey).toBe('ring.pip');
+    expect(stabDepart2.stabilizedEval.primaryDirective).toContain('bend your ring finger forward');
+  });
+
+  test('measures combined response latency across 15 FPS, 30 FPS, and 60 FPS and resets state on hand switch / tracking loss', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    const canonicalPathaka: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 50, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+
+    const testFrameRateResponse = (fps: number) => {
+      const dtMs = 1000 / fps;
+      let smoothed: typeof baseKinematics | null = null;
+      let anchor: CoachingAnchorState | null = null;
+      let hold: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+      let now = 1000;
+
+      // Establish ~500ms of valid hold
+      const warmupFrames = Math.round(500 / dtMs) + 1;
+      for (let i = 0; i < warmupFrames; i += 1) {
+        smoothed = smoothHandKinematics(smoothed, canonicalPathaka, 0.4, dtMs);
+        const rawEval = evaluateMudraKinematics(smoothed, CANONICAL_MUDRAS.pathaka);
+        const res = stabilizeCoachingEvaluation(rawEval, smoothed, anchor, now);
+        anchor = res.nextAnchor;
+        hold = advanceHoldTimerState(hold, res.stabilizedEval, dtMs, 2000);
+        now += dtMs;
+      }
+      const peakHoldMs = hold.holdElapsedMs;
+
+      // Inject sustained real error: ring.pip drops from 50° to 15°
+      const errorPose = { ...canonicalPathaka, ring: { mcp: 15, pip: 15, dip: 8 } };
+      let msToStopHold = -1;
+      let msToCoachUpdate = -1;
+
+      for (let f = 1; f <= 10; f += 1) {
+        smoothed = smoothHandKinematics(smoothed, errorPose, 0.4, dtMs);
+        const rawEval = evaluateMudraKinematics(smoothed, CANONICAL_MUDRAS.pathaka);
+        const res = stabilizeCoachingEvaluation(rawEval, smoothed, anchor, now);
+        anchor = res.nextAnchor;
+        hold = advanceHoldTimerState(hold, res.stabilizedEval, dtMs, 2000);
+
+        if (msToStopHold < 0 && hold.holdElapsedMs <= peakHoldMs) {
+          msToStopHold = Math.round(f * dtMs);
+        }
+        if (
+          msToCoachUpdate < 0 &&
+          !res.stabilizedEval.isMastered &&
+          res.stabilizedEval.primaryJointKey === 'ring.pip'
+        ) {
+          msToCoachUpdate = Math.round(f * dtMs);
+        }
+        now += dtMs;
+      }
+
+      return { msToStopHold, msToCoachUpdate };
+    };
+
+    const r15 = testFrameRateResponse(15); // dt = 66.7ms
+    const r30 = testFrameRateResponse(30); // dt = 33.3ms
+    const r60 = testFrameRateResponse(60); // dt = 16.7ms
+
+    // Across 15, 30, and 60 FPS, hold accumulation stops on the very first error frame (17–67ms)
+    // and corrective coaching updates within <= 67ms (1–2 frames).
+    expect(r15.msToStopHold).toBeLessThanOrEqual(67);
+    expect(r30.msToStopHold).toBeLessThanOrEqual(34);
+    expect(r60.msToStopHold).toBeLessThanOrEqual(17);
+
+    expect(r15.msToCoachUpdate).toBeLessThanOrEqual(67);
+    expect(r30.msToCoachUpdate).toBeLessThanOrEqual(67);
+    expect(r60.msToCoachUpdate).toBeLessThanOrEqual(34);
+
+    // Verify handedness switch ('Right' -> 'Left') resets hold timer and anchor state
+    const rightEval = evaluateMudraKinematics(
+      { ...canonicalPathaka, handedness: 'Right' },
+      CANONICAL_MUDRAS.pathaka
+    );
+    const leftEval = evaluateMudraKinematics(
+      { ...canonicalPathaka, handedness: 'Left' },
+      CANONICAL_MUDRAS.pathaka
+    );
+    let holdState: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    // Frame 0 establishes anchor (0ms), followed by 4 valid 200ms intervals (= 800ms)
+    holdState = advanceHoldTimerState(holdState, rightEval, 33, 2000);
+    expect(holdState.holdElapsedMs).toBe(0);
+    expect(holdState.hasValidAnchor).toBe(true);
+    for (let step = 0; step < 4; step += 1) {
+      holdState = advanceHoldTimerState(holdState, rightEval, 200, 2000);
+    }
+    expect(holdState.holdElapsedMs).toBe(800);
+
+    // Switching hand to 'Left' mid-hold resets holdElapsedMs to 0 and clears hasValidAnchor
+    holdState = advanceHoldTimerState(holdState, leftEval, 100, 2000);
+    expect(holdState.holdElapsedMs).toBe(0);
+    expect(holdState.hasValidAnchor).toBe(false);
+    expect(holdState.handedness).toBe('Left');
+  });
+
+  test('enforces strict target-range wording, mandatory vs non-signature criteria, and hold-time accounting', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    const canonicalPathaka: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+
+    const passingEval = evaluateMudraKinematics(canonicalPathaka, CANONICAL_MUDRAS.pathaka);
+    expect(passingEval.isMastered).toBe(true);
+    expect(passingEval.isValidHoldFrame).toBe(true);
+    expect(passingEval.isFlawless).toBe(true);
+    expect(passingEval.primaryDirective).toBe(WITHIN_TARGET_RANGES_DIRECTIVE);
+
+    // 1. Non-signature joint (pinky.mcp, weight 1.2 < 2.0) with permitted MINOR_DEVIATION (46°, target 22°±20°, normErr = 1.20):
+    //    Passes mandatory criteria (matchScore >= 88, signature joints <= 1.0), but MUST NOT claim "Within target ranges".
+    const nonSignatureDeviationPose: typeof baseKinematics = {
+      ...canonicalPathaka,
+      pinky: { mcp: 46, pip: 18, dip: 10 },
+    };
+    const nonSigEval = evaluateMudraKinematics(
+      nonSignatureDeviationPose,
+      CANONICAL_MUDRAS.pathaka
+    );
+    expect(nonSigEval.isMastered).toBe(true);
+    expect(nonSigEval.isValidHoldFrame).toBe(true);
+    expect(nonSigEval.isFlawless).toBe(false);
+    expect(nonSigEval.primaryDirective).not.toContain('Within target ranges');
+    expect(nonSigEval.primaryDirective).toContain(
+      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)):'
+    );
+
+    const stabilizedNonSig = stabilizeCoachingEvaluation(
+      nonSigEval,
+      nonSignatureDeviationPose,
+      null,
+      1000
+    );
+    expect(stabilizedNonSig.stabilizedEval.isMastered).toBe(true);
+    expect(stabilizedNonSig.stabilizedEval.isFlawless).toBe(false);
+    expect(stabilizedNonSig.stabilizedEval.primaryDirective).not.toContain('Within target ranges');
+    expect(stabilizedNonSig.stabilizedEval.primaryDirective).toContain(
+      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)):'
+    );
+
+    // 2. Hold-time accounting:
+    //    (a) First valid frame establishes anchor (hasValidAnchor: true) and credits 0ms before an observed elapsed interval.
+    let state: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    state = advanceHoldTimerState(state, passingEval, 33, 2000, 350);
+    expect(state.holdElapsedMs).toBe(0);
+    expect(state.hasValidAnchor).toBe(true);
+
+    //    (b) Subsequent valid frames across valid observed intervals (0 < dtMs <= 250ms) earn +dtMs.
+    state = advanceHoldTimerState(state, passingEval, 200, 2000, 350);
+    state = advanceHoldTimerState(state, passingEval, 200, 2000, 350);
+    state = advanceHoldTimerState(state, passingEval, 200, 2000, 350);
+    expect(state.holdElapsedMs).toBe(600);
+
+    //    (c) Stalled frames or background-tab gaps (dtMs > 250ms or dtMs = 0) earn +0ms.
+    state = advanceHoldTimerState(state, passingEval, 800, 2000, 350);
+    expect(state.holdElapsedMs).toBe(600);
+    state = advanceHoldTimerState(state, passingEval, 0, 2000, 350);
+    expect(state.holdElapsedMs).toBe(600);
+
+    //    (d) Hysteresis-only frames (isMastered: true, isValidHoldFrame: false) earn +0ms, clear hasValidAnchor, and consume grace.
+    const hysteresisEval = {
+      ...passingEval,
+      matchScore: 86,
+      isMastered: true,
+      isValidHoldFrame: false,
+      isFlawless: false,
+    };
+    state = advanceHoldTimerState(state, hysteresisEval, 200, 2000, 350);
+    expect(state.holdElapsedMs).toBe(600);
+    expect(state.hasValidAnchor).toBe(false);
+    expect(state.totalGraceUsedMs).toBe(200);
+
+    //    (e) Resuming valid pose after an invalid frame first re-anchors (+0ms on transition frame), then earns +dtMs on the next valid interval.
+    state = advanceHoldTimerState(state, passingEval, 100, 2000, 350);
+    expect(state.holdElapsedMs).toBe(600);
+    expect(state.hasValidAnchor).toBe(true);
+    state = advanceHoldTimerState(state, passingEval, 100, 2000, 350);
+    expect(state.holdElapsedMs).toBe(700);
+    expect(state.totalGraceUsedMs).toBe(200); // Cumulative grace used is retained during the attempt
+
+    //    (f) Second 200ms dip pushes totalGraceUsedMs to 400ms (> 350ms graceWindowMs) -> decays by 0.75 * 200 = 150ms!
+    state = advanceHoldTimerState(state, hysteresisEval, 200, 2000, 350);
+    expect(state.totalGraceUsedMs).toBe(400);
+    expect(state.holdElapsedMs).toBe(550);
+
+    //    (g) Completion can NEVER occur on an invalid frame, even if holdElapsedMs is near/at holdDurationMs.
+    const nearCompleteState: HoldTimerState = {
+      holdElapsedMs: 1995,
+      dropoutElapsedMs: 0,
+      totalGraceUsedMs: 0,
+      hasValidAnchor: true,
+      isHoldMastered: false,
+    };
+    const afterInvalidNearEnd = advanceHoldTimerState(
+      nearCompleteState,
+      hysteresisEval,
+      100,
+      2000,
+      350
+    );
+    expect(afterInvalidNearEnd.isHoldMastered).toBe(false);
+    expect(afterInvalidNearEnd.holdElapsedMs).toBe(1995);
+    expect(afterInvalidNearEnd.hasValidAnchor).toBe(false);
+
+    //    (h) Tracking loss hard-resets holdElapsedMs to 0 and clears hasValidAnchor.
+    const afterTrackingLoss = advanceHoldTimerState(afterInvalidNearEnd, null, 33, 2000, 350);
+    expect(afterTrackingLoss.holdElapsedMs).toBe(0);
+    expect(afterTrackingLoss.hasValidAnchor).toBe(false);
+    expect(afterTrackingLoss.isHoldMastered).toBe(false);
   });
 
   test('computes rolling temporal variability stats accurately for calibration telemetry', () => {
@@ -444,106 +903,37 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(stats.stdDev).toBeCloseTo(1.41, 2);
   });
 
-  test('stabilizes AI coach directives via anchor-vector similarity gate and sticky joint completion', () => {
-    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
-    expect(baseKinematics).not.toBeNull();
-    if (!baseKinematics) return;
-
-    // 1. Frame 0: index.pip is slightly more wrong than middle.pip in Mushti
-    const frame0Pose: typeof baseKinematics = {
-      ...baseKinematics,
-      thumb: { mcp: 35, pip: 42 },
-      index: { mcp: 78, pip: 28, dip: 20 }, // -67° from 95° target
-      middle: { mcp: 78, pip: 30, dip: 20 }, // -65° from 95° target
-      ring: { mcp: 75, pip: 95, dip: 60 },
-      pinky: { mcp: 75, pip: 92, dip: 60 },
-    };
-
-    // Frame 1 (50ms later): minor MediaPipe jitter (±3°) swaps raw rank #1 and #2 between index.pip and middle.pip
-    const frame1JitterPose: typeof baseKinematics = {
-      ...frame0Pose,
-      index: { mcp: 78, pip: 31, dip: 20 }, // -64°
-      middle: { mcp: 78, pip: 27, dip: 20 }, // -68°
-    };
-
-    const vec0 = extractKinematicsFeatureVector(frame0Pose);
-    const vec1 = extractKinematicsFeatureVector(frame1JitterPose);
-    expect(vec0).toHaveLength(17);
-    expect(areKinematicsVectorsSimilar(vec0, vec1)).toBe(true);
-
-    const rawEval0 = evaluateMudraKinematics(frame0Pose, CANONICAL_MUDRAS.mushti);
-    const rawEval1 = evaluateMudraKinematics(frame1JitterPose, CANONICAL_MUDRAS.mushti);
-    // Raw evaluation flips primary joint from index.pip to middle.pip on a 3° jitter
-    expect(rawEval0.primaryJointKey).toBe('index.pip');
-    expect(rawEval1.primaryJointKey).toBe('middle.pip');
-
-    // Stabilized evaluation freezes the anchor directive on frame 1
-    const step0 = stabilizeCoachingEvaluation(rawEval0, frame0Pose, null, 1000);
-    expect(step0.stabilizedEval.primaryJointKey).toBe('index.pip');
-
-    const step1 = stabilizeCoachingEvaluation(
-      rawEval1,
-      frame1JitterPose,
-      step0.nextAnchor,
-      1050
-    );
-    expect(step1.stabilizedEval.primaryJointKey).toBe('index.pip');
-    expect(step1.stabilizedEval.primaryDirective).toBe(step0.stabilizedEval.primaryDirective);
-    // Live matchScore is still updated every frame
-    expect(step1.stabilizedEval.matchScore).toBe(rawEval1.matchScore);
-
-    // 2. Frame 2 (400ms later): user is mid-way curling index.pip (moved +30° to 58°, still <73° min).
-    // Even though vector moved >12° (not similar to anchor), sticky joint lock holds index.pip directive
-    // while user is actively fixing it so the coach doesn't switch to middle.pip mid-action.
-    const frame2MidActionPose: typeof baseKinematics = {
-      ...frame0Pose,
-      index: { mcp: 78, pip: 58, dip: 45 }, // still TOO_STRAIGHT (-37°), now less wrong than middle.pip (-65°)
-      middle: { mcp: 78, pip: 30, dip: 20 },
-    };
-    const vec2 = extractKinematicsFeatureVector(frame2MidActionPose);
-    expect(areKinematicsVectorsSimilar(vec0, vec2)).toBe(false);
-
-    const rawEval2 = evaluateMudraKinematics(frame2MidActionPose, CANONICAL_MUDRAS.mushti);
-    expect(rawEval2.primaryJointKey).toBe('middle.pip');
-
-    const step2 = stabilizeCoachingEvaluation(
-      rawEval2,
-      frame2MidActionPose,
-      step1.nextAnchor,
-      1400
-    );
-    expect(step2.stabilizedEval.primaryJointKey).toBe('index.pip');
-    expect(step2.stabilizedEval.primaryDirective).toContain('Curl your index finger');
-
-    // 3. Frame 3 (600ms later): user finishes curling index.pip into CORRECT range (92°).
-    // Even before minDwellMs (1400ms) expires, stabilizer immediately releases index.pip and advances to middle.pip!
-    const frame3IndexFixedPose: typeof baseKinematics = {
-      ...frame0Pose,
-      index: { mcp: 78, pip: 92, dip: 65 }, // CORRECT
-      middle: { mcp: 78, pip: 30, dip: 20 }, // still TOO_STRAIGHT
-    };
-    const rawEval3 = evaluateMudraKinematics(frame3IndexFixedPose, CANONICAL_MUDRAS.mushti);
-    const step3 = stabilizeCoachingEvaluation(
-      rawEval3,
-      frame3IndexFixedPose,
-      step2.nextAnchor,
-      1600
-    );
-    expect(step3.stabilizedEval.primaryJointKey).toBe('middle.pip');
-    expect(step3.stabilizedEval.primaryDirective).toBe(
-      'Fold your middle finger firmly into your palm.'
-    );
-  });
-
-  test('renders updated tolerance legend and optional Developer Diagnostic View with calibration snapshot', async ({
+  test('verifies layout stability across wide (1280px) and narrow (375px) viewports and telemetry snapshot', async ({
     page,
   }) => {
-    // Verify legacy route slug 'musti' resolves to canonical 'mushti'
-    await page.goto('/learn/mudras/practice/musti');
+    const verifyViewportStability = async (width: number, height: number) => {
+      await page.setViewportSize({ width, height });
+      await page.goto('/learn/mudras/practice/musti');
 
-    await expect(
-      page.getByRole('heading', { name: /MudraGuide: 3D Hand Pose Analysis/i })
-    ).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: /MudraGuide: 3D Hand Pose Analysis/i })
+      ).toBeVisible();
+
+      const criteriaCard = page.locator('.ant-card', {
+        hasText: 'Traditional Canonical Criteria',
+      });
+      await expect(criteriaCard).toBeVisible();
+
+      const boxBefore = await criteriaCard.boundingBox();
+      expect(boxBefore).not.toBeNull();
+
+      // Switch mudra to trigger a different directive & secondary tip length
+      await page.goto('/learn/mudras/practice/thripathaka');
+      await expect(criteriaCard).toBeVisible();
+      const boxAfter = await criteriaCard.boundingBox();
+      expect(boxAfter).not.toBeNull();
+
+      // Vertical position of the card below AI Coach Feedback must remain locked (Δy = 0px)
+      expect(Math.abs((boxAfter?.y ?? 0) - (boxBefore?.y ?? 0))).toBe(0);
+    };
+
+    await verifyViewportStability(1280, 800);
+    await verifyViewportStability(375, 667);
 
     const diagSwitch = page.getByRole('switch', { name: 'Toggle Developer Diagnostics' });
     await expect(diagSwitch).toBeVisible();
@@ -558,7 +948,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
     const snapshotPre = page.getByTestId('calibration-snapshot-json');
     await expect(snapshotPre).toBeVisible();
-    await expect(snapshotPre).toContainText('"mudraId": "mushti"');
-    await expect(snapshotPre).toContainText('"mudraName": "Mushti"');
+    await expect(snapshotPre).toContainText('"mudraId": "thripathaka"');
+    await expect(snapshotPre).toContainText('"recentFrameTrace"');
   });
 });

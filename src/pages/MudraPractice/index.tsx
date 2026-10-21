@@ -40,6 +40,7 @@ import {
 } from 'data/canonicalMudras';
 import {
   extractHandKinematics,
+  smoothHandKinematics,
   resolveHandedness,
   JOINT_TRIPLETS,
 } from 'utils/mudraKinematics';
@@ -47,6 +48,8 @@ import {
   evaluateMudraKinematics,
   computeTemporalFeatureStats,
   stabilizeCoachingEvaluation,
+  advanceHoldTimerState,
+  MAX_HOLD_FRAME_DT_MS,
 } from 'utils/mudraEvaluator';
 import { handLandmarkerService, HAND_CONNECTIONS } from 'services/handLandmarkerService';
 import {
@@ -57,6 +60,8 @@ import {
   HandKinematics,
   TemporalFeatureStats,
   CoachingAnchorState,
+  HoldTimerState,
+  DiagnosticFrameSample,
 } from 'types/mudra';
 
 const { Title, Text, Paragraph } = Typography;
@@ -65,6 +70,7 @@ type InputMode = 'picture' | 'video' | 'webcam';
 
 const HOLD_DURATION_MS = 2000; // 2.0-second continuous hold requirement
 const TEMPORAL_WINDOW_SIZE = 30; // Rolling frame window for temporal variability
+const DIAGNOSTIC_TRACE_LIMIT = 60; // Rolling timestamped frame trace for diagnostics
 
 const SAMPLE_IMAGE_URLS = [
   {
@@ -127,10 +133,10 @@ const extractFeatureMapFromKinematics = (kin: HandKinematics): Record<string, nu
   'closure.middle': kin.fingerClosure.middle,
   'closure.ring': kin.fingerClosure.ring,
   'closure.pinky': kin.fingerClosure.pinky,
-  'contact.thumbIndex': kin.tipDistances.thumbIndex * 100,
-  'contact.thumbMiddle': kin.tipDistances.thumbMiddle * 100,
-  'contact.thumbRing': kin.tipDistances.thumbRing * 100,
-  'contact.thumbPinky': kin.tipDistances.thumbPinky * 100,
+  'contact.thumbIndex': kin.tipDistances.thumbIndex,
+  'contact.thumbMiddle': kin.tipDistances.thumbMiddle,
+  'contact.thumbRing': kin.tipDistances.thumbRing,
+  'contact.thumbPinky': kin.tipDistances.thumbPinky,
 });
 
 const MudraPracticePage: React.FC = () => {
@@ -167,15 +173,22 @@ const MudraPracticePage: React.FC = () => {
   const [temporalStatsMap, setTemporalStatsMap] = useState<Record<string, TemporalFeatureStats>>({});
   const [capturedSnapshotJson, setCapturedSnapshotJson] = useState<string>('');
   const featureHistoryRef = useRef<Record<string, number[]>>({});
+  const diagnosticTraceRef = useRef<DiagnosticFrameSample[]>([]);
 
-  // 2.0-second continuous hold timer state & refs
+  // 2.0-second continuous hold timer & temporal stabilization refs
   const [holdProgressMs, setHoldProgressMs] = useState<number>(0);
   const [isHoldMastered, setIsHoldMastered] = useState<boolean>(false);
-  const holdElapsedMsRef = useRef<number>(0);
+  const holdTimerStateRef = useRef<HoldTimerState>({
+    holdElapsedMs: 0,
+    dropoutElapsedMs: 0,
+    totalGraceUsedMs: 0,
+    hasValidAnchor: false,
+    isHoldMastered: false,
+  });
   const lastFrameTimeRef = useRef<number | null>(null);
-  const masteredLockedRef = useRef<boolean>(false);
   const isDetectingFrameRef = useRef<boolean>(false);
   const coachingAnchorRef = useRef<CoachingAnchorState | null>(null);
+  const smoothedKinematicsRef = useRef<HandKinematics | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -189,6 +202,8 @@ const MudraPracticePage: React.FC = () => {
 
   const resetTemporalHistory = useCallback(() => {
     featureHistoryRef.current = {};
+    diagnosticTraceRef.current = [];
+    smoothedKinematicsRef.current = null;
     setTemporalStatsMap({});
   }, []);
 
@@ -208,10 +223,16 @@ const MudraPracticePage: React.FC = () => {
   }, []);
 
   const resetHoldTimer = useCallback(() => {
-    holdElapsedMsRef.current = 0;
+    holdTimerStateRef.current = {
+      holdElapsedMs: 0,
+      dropoutElapsedMs: 0,
+      totalGraceUsedMs: 0,
+      hasValidAnchor: false,
+      isHoldMastered: false,
+    };
     lastFrameTimeRef.current = null;
-    masteredLockedRef.current = false;
     coachingAnchorRef.current = null;
+    smoothedKinematicsRef.current = null;
     setHoldProgressMs(0);
     setIsHoldMastered(false);
   }, []);
@@ -240,6 +261,23 @@ const MudraPracticePage: React.FC = () => {
       return matchingSample ? matchingSample.url : prevUrl;
     });
   }, [selectedMudraId, resetHoldTimer, resetTemporalHistory]);
+
+  // Clear frame interval anchor when tab is backgrounded so hidden gaps never earn hold credit
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        lastFrameTimeRef.current = null;
+        holdTimerStateRef.current = {
+          ...holdTimerStateRef.current,
+          hasValidAnchor: false,
+        };
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   // Initialize MediaPipe model
   useEffect(() => {
@@ -472,8 +510,11 @@ const MudraPracticePage: React.FC = () => {
           }
 
           if (evalRes.measurementStatus === 'VALID' && evalRes.isMastered) {
-            holdElapsedMsRef.current = HOLD_DURATION_MS;
-            masteredLockedRef.current = true;
+            holdTimerStateRef.current = {
+              holdElapsedMs: HOLD_DURATION_MS,
+              dropoutElapsedMs: 0,
+              isHoldMastered: true,
+            };
             setHoldProgressMs(HOLD_DURATION_MS);
             setIsHoldMastered(true);
           } else {
@@ -514,7 +555,7 @@ const MudraPracticePage: React.FC = () => {
     }
   }, [selectedMudraId, selectedImageUrl, inputMode, isLoadingModel, analyzeImage]);
 
-  // Video frame loop with concurrency guard and 2.0-second continuous hold accumulator
+  // Video frame loop with concurrency guard, temporal EMA filter, hysteresis, and 2.0s hold timer
   const processVideoFrame = useCallback(() => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -535,8 +576,14 @@ const MudraPracticePage: React.FC = () => {
     }
 
     const now = performance.now();
-    const dt = lastFrameTimeRef.current ? Math.min(now - lastFrameTimeRef.current, 200) : 33;
-    lastFrameTimeRef.current = now;
+    const rawDt = lastFrameTimeRef.current !== null ? now - lastFrameTimeRef.current : 0;
+    const isHiddenOrStalled =
+      (typeof document !== 'undefined' && document.hidden) ||
+      rawDt <= 0 ||
+      rawDt > MAX_HOLD_FRAME_DT_MS;
+    const dt = isHiddenOrStalled ? 0 : rawDt;
+    lastFrameTimeRef.current =
+      typeof document !== 'undefined' && document.hidden ? null : now;
 
     (async () => {
       try {
@@ -557,8 +604,40 @@ const MudraPracticePage: React.FC = () => {
           const rawScore = handCategories?.[0]?.score;
           setHandednessScore(typeof rawScore === 'number' ? rawScore : null);
 
-          // Strictly use 3D worldLandmarks for assessment; do not fallback to image landmarks
-          const kinematics = extractHandKinematics(firstWorldHand, handedness);
+          // Reset temporal filter and hold state if the detected hand switches (Left <-> Right)
+          const prevHandedness = smoothedKinematicsRef.current?.handedness;
+          if (
+            prevHandedness &&
+            prevHandedness !== 'Unknown' &&
+            handedness !== 'Unknown' &&
+            prevHandedness !== handedness
+          ) {
+            smoothedKinematicsRef.current = null;
+            coachingAnchorRef.current = null;
+            featureHistoryRef.current = {};
+            lastFrameTimeRef.current = now;
+            if (!holdTimerStateRef.current.isHoldMastered) {
+              holdTimerStateRef.current = {
+                holdElapsedMs: 0,
+                dropoutElapsedMs: 0,
+                totalGraceUsedMs: 0,
+                hasValidAnchor: false,
+                handedness,
+                isHoldMastered: false,
+              };
+              setHoldProgressMs(0);
+            }
+          }
+
+          // Strictly use 3D worldLandmarks for assessment; apply frame-rate-aware EMA smoothing for live video
+          const rawKinematics = extractHandKinematics(firstWorldHand, handedness);
+          const kinematics = smoothHandKinematics(
+            smoothedKinematicsRef.current,
+            rawKinematics,
+            0.4,
+            dt > 0 ? dt : 33.3
+          );
+          smoothedKinematicsRef.current = kinematics;
           setLatestKinematics(kinematics);
 
           const rawEvalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
@@ -575,43 +654,66 @@ const MudraPracticePage: React.FC = () => {
             recordKinematicsSample(kinematics);
           }
 
-          if (evalRes.measurementStatus === 'MEASUREMENT_UNAVAILABLE') {
-            // Prevent hold-time accumulation when 3D world landmarks are unavailable
-            if (!masteredLockedRef.current) {
-              holdElapsedMsRef.current = 0;
-              setHoldProgressMs(0);
-            }
-          } else if (!masteredLockedRef.current) {
-            if (evalRes.isMastered) {
-              holdElapsedMsRef.current = Math.min(
-                HOLD_DURATION_MS,
-                holdElapsedMsRef.current + dt
-              );
-              if (holdElapsedMsRef.current >= HOLD_DURATION_MS) {
-                masteredLockedRef.current = true;
-                setIsHoldMastered(true);
-                message.success(
-                  `🎉 Mudra Mastered! You held ${currentMudraRef.current.name} steadily for 2.0 seconds!`
-                );
-              }
-            } else if (evalRes.matchScore < 70) {
-              holdElapsedMsRef.current = 0;
-            } else {
-              // Gentle decay on minor single-frame jitter
-              holdElapsedMsRef.current = Math.max(0, holdElapsedMsRef.current - dt * 1.5);
-            }
-            setHoldProgressMs(Math.round(holdElapsedMsRef.current));
+          // Advance 2.0s hold timer with 350ms cumulative dropout grace budget
+          const prevHoldState = holdTimerStateRef.current;
+          const nextHoldState = advanceHoldTimerState(
+            prevHoldState,
+            evalRes,
+            dt,
+            HOLD_DURATION_MS
+          );
+          holdTimerStateRef.current = nextHoldState;
+          setHoldProgressMs(Math.round(nextHoldState.holdElapsedMs));
+
+          if (!prevHoldState.isHoldMastered && nextHoldState.isHoldMastered) {
+            setIsHoldMastered(true);
+            message.success(
+              `🎉 Mudra Mastered! You accumulated 2.0 seconds of valid ${currentMudraRef.current.name} pose!`
+            );
           }
+
+          // Record timestamped diagnostic sample for root-cause and stability telemetry
+          const ringPipEval = evalRes.jointEvaluations.find((j) => j.jointKey === 'ring.pip');
+          const traceSample: DiagnosticFrameSample = {
+            timestampMs: Math.round(now),
+            dtMs: Math.round(dt),
+            rawMatchScore: rawEvalRes.matchScore,
+            stabilizedMatchScore: evalRes.matchScore,
+            rawIsMastered: rawEvalRes.isMastered,
+            stabilizedIsMastered: evalRes.isMastered,
+            isValidHoldFrame: Boolean(evalRes.isValidHoldFrame),
+            isFlawless: Boolean(evalRes.isFlawless),
+            holdElapsedMs: Math.round(nextHoldState.holdElapsedMs),
+            dropoutElapsedMs: Math.round(nextHoldState.dropoutElapsedMs),
+            primaryJointKey: evalRes.primaryJointKey,
+            ringPipRawDeg: rawKinematics ? Number(rawKinematics.ring.pip.toFixed(2)) : undefined,
+            ringPipSmoothedDeg: kinematics ? Number(kinematics.ring.pip.toFixed(2)) : undefined,
+            ringPipPenalty: ringPipEval?.weightedPenalty,
+            ringPipStatus: ringPipEval?.status,
+          };
+          diagnosticTraceRef.current = [
+            ...diagnosticTraceRef.current.slice(-(DIAGNOSTIC_TRACE_LIMIT - 1)),
+            traceSample,
+          ];
 
           drawSkeleton(ctx, firstOverlayHand, canvas.width, canvas.height, evalRes);
         } else {
-          // Tracking lost: clear stale kinematics/evaluation and reset unmastered hold timer
+          // Tracking lost: clear stale kinematics/evaluation, frame interval anchor, and unmastered hold timer
+          lastFrameTimeRef.current = null;
           coachingAnchorRef.current = null;
+          smoothedKinematicsRef.current = null;
+          featureHistoryRef.current = {};
           setLatestKinematics(null);
           setHandednessScore(null);
           setEvaluationResult(null);
-          if (!masteredLockedRef.current) {
-            holdElapsedMsRef.current = 0;
+          if (!holdTimerStateRef.current.isHoldMastered) {
+            holdTimerStateRef.current = {
+              holdElapsedMs: 0,
+              dropoutElapsedMs: 0,
+              totalGraceUsedMs: 0,
+              hasValidAnchor: false,
+              isHoldMastered: false,
+            };
             setHoldProgressMs(0);
           }
         }
@@ -638,7 +740,7 @@ const MudraPracticePage: React.FC = () => {
         videoRef.current.onloadedmetadata = () => {
           videoRef.current?.play();
           setIsWebcamActive(true);
-          lastFrameTimeRef.current = performance.now();
+          lastFrameTimeRef.current = null;
           animationFrameIdRef.current = requestAnimationFrame(processVideoFrame);
         };
       }
@@ -680,9 +782,13 @@ const MudraPracticePage: React.FC = () => {
       palmWidthMeters:
         latestKinematics ? Number(latestKinematics.palmWidthMeters.toFixed(4)) : null,
       matchScore: evaluationResult?.matchScore ?? 0,
+      isMastered: evaluationResult?.isMastered ?? false,
+      isFlawless: evaluationResult?.isFlawless ?? false,
+      holdTimerState: holdTimerStateRef.current,
       kinematics: latestKinematics,
       jointEvaluations: evaluationResult?.jointEvaluations ?? [],
       temporalVariability: temporalStatsMap,
+      recentFrameTrace: diagnosticTraceRef.current,
     };
 
     const jsonText = JSON.stringify(snapshot, null, 2);
@@ -716,21 +822,30 @@ const MudraPracticePage: React.FC = () => {
       title: 'Actual',
       dataIndex: 'currentDegrees',
       key: 'currentDegrees',
-      render: (deg: number) => `${deg}°`,
+      render: (val: number, record: JointEvaluation) =>
+        record.unit === 'palmRatio' || record.jointKey.startsWith('contact.')
+          ? `${val.toFixed(2)} palm`
+          : `${val}°`,
     },
     {
       title: 'Target',
       dataIndex: 'targetDegrees',
       key: 'targetDegrees',
-      render: (deg: number) => `${deg}°`,
+      render: (val: number, record: JointEvaluation) =>
+        record.unit === 'palmRatio' || record.jointKey.startsWith('contact.')
+          ? `≤ ${val.toFixed(2)} palm`
+          : `${val}°`,
     },
     {
-      title: 'Discrepancy (Δθ)',
+      title: 'Discrepancy (Δ)',
       dataIndex: 'deltaDegrees',
       key: 'deltaDegrees',
-      render: (delta: number) => {
-        const sign = delta > 0 ? `+${delta}°` : `${delta}°`;
-        return <Text type={Math.abs(delta) > 20 ? 'danger' : 'secondary'}>{sign}</Text>;
+      render: (delta: number, record: JointEvaluation) => {
+        const isContact = record.unit === 'palmRatio' || record.jointKey.startsWith('contact.');
+        const formatted = isContact
+          ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)} palm`
+          : `${delta > 0 ? `+${delta}°` : `${delta}°`}`;
+        return <Text type={record.status === 'INCORRECT' ? 'danger' : 'secondary'}>{formatted}</Text>;
       },
     },
     {
@@ -774,18 +889,18 @@ const MudraPracticePage: React.FC = () => {
       dataIndex: 'rawValue',
       key: 'rawValue',
       render: (rawValue: number | undefined, record: JointEvaluation) => {
-        const isContact = record.jointKey.startsWith('contact.');
+        const isContact = record.unit === 'palmRatio' || record.jointKey.startsWith('contact.');
         const val = rawValue ?? record.currentDegrees;
-        return isContact ? `${val}% palm` : `${val}°`;
+        return isContact ? `${Number(val).toFixed(3)} palm` : `${val}°`;
       },
     },
     {
       title: 'Target Range',
       key: 'acceptedRange',
       render: (_: unknown, record: JointEvaluation) => {
-        const isContact = record.jointKey.startsWith('contact.');
+        const isContact = record.unit === 'palmRatio' || record.jointKey.startsWith('contact.');
         if (isContact) {
-          return `≤ ${record.targetDegrees}% palm`;
+          return `≤ ${record.targetDegrees.toFixed(2)} palm`;
         }
         const [minDeg, maxDeg] = record.acceptedRange || [
           record.targetDegrees - (record.toleranceDegrees || 0),
@@ -799,9 +914,11 @@ const MudraPracticePage: React.FC = () => {
       dataIndex: 'deltaDegrees',
       key: 'deltaDegrees',
       render: (delta: number, record: JointEvaluation) => {
-        const unit = record.jointKey.startsWith('contact.') ? '%' : '°';
-        const sign = delta > 0 ? `+${delta}${unit}` : `${delta}${unit}`;
-        return <Text type={record.status === 'INCORRECT' ? 'danger' : 'secondary'}>{sign}</Text>;
+        const isContact = record.unit === 'palmRatio' || record.jointKey.startsWith('contact.');
+        const formatted = isContact
+          ? `${delta > 0 ? '+' : ''}${delta.toFixed(2)} palm`
+          : `${delta > 0 ? `+${delta}°` : `${delta}°`}`;
+        return <Text type={record.status === 'INCORRECT' ? 'danger' : 'secondary'}>{formatted}</Text>;
       },
     },
     {
@@ -816,7 +933,9 @@ const MudraPracticePage: React.FC = () => {
       render: (_: unknown, record: JointEvaluation) => {
         const stats = temporalStatsMap[record.jointKey];
         if (!stats || stats.sampleCount === 0) return '—';
-        return `${stats.mean}° ± ${stats.stdDev}° [${stats.min}..${stats.max}] (n=${stats.sampleCount})`;
+        const isContact = record.unit === 'palmRatio' || record.jointKey.startsWith('contact.');
+        const unit = isContact ? '' : '°';
+        return `${stats.mean}${unit} ± ${stats.stdDev}${unit} [${stats.min}..${stats.max}] (n=${stats.sampleCount})`;
       },
     },
   ];
@@ -828,9 +947,16 @@ const MudraPracticePage: React.FC = () => {
   if (isMeasurementUnavailable) {
     coachAlertMessage = 'Measurement Unavailable (3D World Landmarks Missing)';
   } else if (isHoldMastered) {
-    coachAlertMessage = 'Mudra Mastered! 2.0-Second Continuous Hold Complete.';
+    coachAlertMessage = evaluationResult?.isFlawless
+      ? 'Within target ranges — 2.0s hold complete.'
+      : 'Good Form — 2.0s hold complete (optional refinement available).';
+  } else if (evaluationResult?.isFlawless) {
+    coachAlertMessage = 'Within target ranges — accumulate 2.0s of valid pose time...';
   } else if (evaluationResult?.isMastered) {
-    coachAlertMessage = 'Great Form! Hold steady for 2.0 seconds to master...';
+    coachAlertMessage =
+      evaluationResult.isValidHoldFrame === false
+        ? 'Hold paused (boundary grace) — refine highlighted joint to resume hold'
+        : 'Good Form (with optional refinement) — accumulate 2.0s of valid pose time...';
   }
 
   let coachAlertIcon = <BulbOutlined />;
@@ -977,13 +1103,19 @@ const MudraPracticePage: React.FC = () => {
               <Select
                 value={selectedImageUrl}
                 style={{ width: isMobile ? '100%' : 280 }}
-                onChange={(url) => setSelectedImageUrl(url)}
+                onChange={(url) => {
+                  resetHoldTimer();
+                  resetTemporalHistory();
+                  setSelectedImageUrl(url);
+                }}
                 options={SAMPLE_IMAGE_URLS.map((s) => ({ label: s.label, value: s.url }))}
               />
               <Upload
                 accept="image/*"
                 showUploadList={false}
                 beforeUpload={(file) => {
+                  resetHoldTimer();
+                  resetTemporalHistory();
                   const url = URL.createObjectURL(file);
                   setSelectedImageUrl(url);
                   return false;
@@ -1146,7 +1278,7 @@ const MudraPracticePage: React.FC = () => {
                     videoRef.current.src = url;
                     videoRef.current.onloadedmetadata = () => {
                       videoRef.current?.play();
-                      lastFrameTimeRef.current = performance.now();
+                      lastFrameTimeRef.current = null;
                       animationFrameIdRef.current = requestAnimationFrame(processVideoFrame);
                     };
                   }
@@ -1189,7 +1321,7 @@ const MudraPracticePage: React.FC = () => {
               </Flex>
             }
           >
-            <Flex align="center" gap="1.5rem">
+            <Flex align="center" gap="1.5rem" vertical={isMobile}>
               <Progress
                 type="circle"
                 percent={isMeasurementUnavailable ? 0 : evaluationResult?.matchScore || 0}
@@ -1197,11 +1329,22 @@ const MudraPracticePage: React.FC = () => {
                 format={(percent) => (isMeasurementUnavailable ? 'N/A' : `${percent}%`)}
               />
 
-              <div style={{ flex: 1 }}>
-                <Text strong style={{ fontSize: '16px', display: 'block', marginBottom: '8px' }}>
+              <div style={{ flex: 1, width: '100%', minWidth: 0 }}>
+                <Text
+                  strong
+                  style={{
+                    fontSize: '16px',
+                    display: 'block',
+                    marginBottom: '8px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
                   Target: {currentMudra.name} ({currentMudra.malayalamName})
                 </Text>
                 <Alert
+                  data-testid="coach-feedback-alert"
                   message={coachAlertMessage}
                   description={
                     evaluationResult?.primaryDirective ||
@@ -1210,16 +1353,23 @@ const MudraPracticePage: React.FC = () => {
                   type={coachAlertType}
                   showIcon
                   icon={coachAlertIcon}
+                  style={{
+                    height: isMobile ? '136px' : '112px',
+                    minHeight: isMobile ? '136px' : '112px',
+                    maxHeight: isMobile ? '136px' : '112px',
+                    overflowY: 'auto',
+                    boxSizing: 'border-box',
+                  }}
                 />
               </div>
             </Flex>
 
-            {/* 2.0-Second Continuous Hold Progress Bar for Video / Webcam */}
+            {/* 2.0-Second Accumulated Valid-Pose Hold Progress Bar for Video / Webcam */}
             {(inputMode === 'webcam' || inputMode === 'video') && (
               <div style={{ marginTop: '16px' }}>
                 <Flex justify="space-between" align="center" style={{ marginBottom: '4px' }}>
                   <Text type="secondary" style={{ fontSize: '13px' }}>
-                    2.0s Continuous Hold Stability:
+                    2.0s Hold Progress (accumulated valid pose time):
                   </Text>
                   <Text
                     strong
@@ -1237,13 +1387,34 @@ const MudraPracticePage: React.FC = () => {
               </div>
             )}
 
-            {evaluationResult?.secondaryDirective &&
+            {/* Fixed-height secondary tip slot to prevent vertical layout shift of cards below */}
+            <div
+              data-testid="coach-secondary-slot"
+              style={{
+                marginTop: '12px',
+                height: isMobile ? '44px' : '32px',
+                minHeight: isMobile ? '44px' : '32px',
+                maxHeight: isMobile ? '44px' : '32px',
+                overflowY: 'auto',
+                boxSizing: 'border-box',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              {evaluationResult?.secondaryDirective &&
               !isHoldMastered &&
-              !isMeasurementUnavailable && (
-                <Paragraph type="secondary" style={{ marginTop: '12px', marginBottom: 0 }}>
+              !isMeasurementUnavailable ? (
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                   <ExclamationCircleOutlined /> Secondary Tip: {evaluationResult.secondaryDirective}
                 </Paragraph>
+              ) : (
+                <Text type="secondary" style={{ fontSize: '12px', opacity: 0.75 }}>
+                  {evaluationResult?.isMastered
+                    ? 'Hold within target ranges to accumulate 2.0 seconds of valid pose time.'
+                    : 'Focus on the primary adjustment above first.'}
+                </Text>
               )}
+            </div>
           </Card>
 
           {/* Canonical Reference & Rules Card */}

@@ -125,12 +125,14 @@ export interface JointEvaluation {
   jointKey: string;
   label: string;
   triplet?: string;
+  unit?: 'deg' | 'palmRatio';
   rawValue?: number;
   currentDegrees: number;
   targetDegrees: number;
   toleranceDegrees?: number;
   acceptedRange?: [number, number];
   deltaDegrees: number;
+  normalizedError?: number; // Dimensionless ratio: absDelta/tol (deg) or actualDist/maxAllowed (palmRatio)
   weight?: number;
   weightedPenalty?: number;
   status: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT';
@@ -144,6 +146,8 @@ export interface MudraEvaluationResult {
   handedness?: HandednessType;
   matchScore: number; // 0 to 100
   isMastered: boolean;
+  isValidHoldFrame?: boolean; // True only when strictly inside entry pass criteria (no hysteresis grace)
+  isFlawless?: boolean; // True only when isValidHoldFrame AND all evaluated joints are 'CORRECT'
   primaryDirective: string;
   secondaryDirective?: string;
   primaryJointKey?: string;
@@ -155,13 +159,46 @@ export interface MudraEvaluationResult {
 
 export interface CoachingAnchorState {
   mudraId: string;
+  handedness?: HandednessType;
   anchorVector: number[];
   primaryDirective: string;
   secondaryDirective?: string;
   primaryJointKey?: string;
   secondaryJointKey?: string;
   wasMastered: boolean;
+  wasValidHoldFrame?: boolean;
+  wasFlawless?: boolean;
+  hysteresisElapsedMs?: number;
+  lastFrameAtMs?: number;
+  jointStatuses?: Record<string, JointEvaluation['status']>;
   updatedAtMs: number;
+}
+
+export interface HoldTimerState {
+  holdElapsedMs: number;
+  dropoutElapsedMs: number;
+  totalGraceUsedMs?: number;
+  hasValidAnchor?: boolean;
+  handedness?: HandednessType;
+  isHoldMastered: boolean;
+}
+
+export interface DiagnosticFrameSample {
+  timestampMs: number;
+  dtMs: number;
+  rawMatchScore: number;
+  stabilizedMatchScore: number;
+  rawIsMastered: boolean;
+  stabilizedIsMastered: boolean;
+  isValidHoldFrame?: boolean;
+  isFlawless: boolean;
+  holdElapsedMs: number;
+  dropoutElapsedMs: number;
+  primaryJointKey?: string;
+  ringPipRawDeg?: number;
+  ringPipSmoothedDeg?: number;
+  ringPipPenalty?: number;
+  ringPipStatus?: JointEvaluation['status'];
 }
 
 export interface TemporalFeatureStats {
