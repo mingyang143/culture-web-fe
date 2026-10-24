@@ -137,6 +137,17 @@ const extractFeatureMapFromKinematics = (kin: HandKinematics): Record<string, nu
   'contact.thumbMiddle': kin.tipDistances.thumbMiddle,
   'contact.thumbRing': kin.tipDistances.thumbRing,
   'contact.thumbPinky': kin.tipDistances.thumbPinky,
+  ...(kin.thumbPlacement
+    ? {
+        'thumbPlacement.radialGapFromIndexMcp': kin.thumbPlacement.radialGapFromIndexMcp,
+        'thumbPlacement.ipRadialGapFromIndexMcp': kin.thumbPlacement.ipRadialGapFromIndexMcp,
+        'thumbPlacement.tipToIndexMcp': kin.thumbPlacement.tipToIndexMcp,
+        'thumbPlacement.tipToMiddleMcp': kin.thumbPlacement.tipToMiddleMcp,
+        'thumbPlacement.longitudinal': kin.thumbPlacement.longitudinal,
+        'thumbPlacement.lateral': kin.thumbPlacement.lateral,
+        'thumbPlacement.palmar': kin.thumbPlacement.palmar,
+      }
+    : {}),
 });
 
 const MudraPracticePage: React.FC = () => {
@@ -1027,6 +1038,60 @@ const MudraPracticePage: React.FC = () => {
       ]
     : [];
 
+  const thumbPlacementRows = latestKinematics?.thumbPlacement
+    ? [
+        {
+          key: 'radialGapFromIndexMcp',
+          label: 'Thumb Tip Radial Gap from Index MCP',
+          landmarkBasis: '(5−4)·eUlnar / 0↔9',
+          value: latestKinematics.thumbPlacement.radialGapFromIndexMcp,
+          stats: temporalStatsMap['thumbPlacement.radialGapFromIndexMcp'],
+        },
+        {
+          key: 'ipRadialGapFromIndexMcp',
+          label: 'Thumb IP Radial Gap from Index MCP',
+          landmarkBasis: '(5−3)·eUlnar / 0↔9',
+          value: latestKinematics.thumbPlacement.ipRadialGapFromIndexMcp,
+          stats: temporalStatsMap['thumbPlacement.ipRadialGapFromIndexMcp'],
+        },
+        {
+          key: 'tipToIndexMcp',
+          label: 'Thumb Tip to Index MCP 3D Distance',
+          landmarkBasis: '4↔5 / 0↔9',
+          value: latestKinematics.thumbPlacement.tipToIndexMcp,
+          stats: temporalStatsMap['thumbPlacement.tipToIndexMcp'],
+        },
+        {
+          key: 'tipToMiddleMcp',
+          label: 'Thumb Tip to Middle MCP 3D Distance',
+          landmarkBasis: '4↔9 / 0↔9',
+          value: latestKinematics.thumbPlacement.tipToMiddleMcp,
+          stats: temporalStatsMap['thumbPlacement.tipToMiddleMcp'],
+        },
+        {
+          key: 'longitudinal',
+          label: 'Thumb Tip Longitudinal Projection',
+          landmarkBasis: '(4−0)·eLong / 0↔9',
+          value: latestKinematics.thumbPlacement.longitudinal,
+          stats: temporalStatsMap['thumbPlacement.longitudinal'],
+        },
+        {
+          key: 'lateral',
+          label: 'Thumb Tip Lateral Projection (Radial→Ulnar)',
+          landmarkBasis: '(4−0)·eUlnar / 0↔9',
+          value: latestKinematics.thumbPlacement.lateral,
+          stats: temporalStatsMap['thumbPlacement.lateral'],
+        },
+        {
+          key: 'palmar',
+          label: 'Thumb Tip Palmar Depth Projection',
+          landmarkBasis: '(4−0)·nPalm / 0↔9',
+          value: latestKinematics.thumbPlacement.palmar,
+          stats: temporalStatsMap['thumbPlacement.palmar'],
+        },
+      ]
+    : [];
+
   return (
     <Flex
       vertical
@@ -1354,9 +1419,9 @@ const MudraPracticePage: React.FC = () => {
                   showIcon
                   icon={coachAlertIcon}
                   style={{
-                    height: isMobile ? '136px' : '112px',
-                    minHeight: isMobile ? '136px' : '112px',
-                    maxHeight: isMobile ? '136px' : '112px',
+                    height: isMobile ? '176px' : '148px',
+                    minHeight: isMobile ? '176px' : '148px',
+                    maxHeight: isMobile ? '176px' : '148px',
                     overflowY: 'auto',
                     boxSizing: 'border-box',
                   }}
@@ -1547,6 +1612,56 @@ const MudraPracticePage: React.FC = () => {
                     render: (_: unknown, row: (typeof auxiliaryClosureRows)[number]) =>
                       row.closureStats && row.closureStats.sampleCount > 0
                         ? `${row.closureStats.mean} ± ${row.closureStats.stdDev} [${row.closureStats.min}..${row.closureStats.max}]`
+                        : '—',
+                  },
+                ]}
+              />
+            </>
+          )}
+
+          {thumbPlacementRows.length > 0 && (
+            <>
+              <Divider orientation="left" style={{ margin: '16px 0 8px' }}>
+                Palm-Relative Thumb Placement Telemetry (Unscored Proposal — Pending Reference Verification)
+              </Divider>
+              <Table
+                data-testid="thumb-placement-telemetry-table"
+                dataSource={thumbPlacementRows}
+                rowKey="key"
+                pagination={false}
+                size="small"
+                columns={[
+                  {
+                    title: 'Thumb Placement Feature',
+                    dataIndex: 'label',
+                    key: 'label',
+                    render: (text: string, row: (typeof thumbPlacementRows)[number]) => (
+                      <Space direction="vertical" size={0}>
+                        <Text strong>{text}</Text>
+                        <Text type="secondary" style={{ fontSize: '11px' }}>
+                          thumbPlacement.{row.key}
+                        </Text>
+                      </Space>
+                    ),
+                  },
+                  {
+                    title: 'Palm-Local Basis',
+                    dataIndex: 'landmarkBasis',
+                    key: 'landmarkBasis',
+                    render: (v: string) => <Tag>{v}</Tag>,
+                  },
+                  {
+                    title: 'Measured (palm units, 0↔9 = 1.0)',
+                    dataIndex: 'value',
+                    key: 'value',
+                    render: (v: number) => `${v.toFixed(3)} palm`,
+                  },
+                  {
+                    title: 'Temporal Variability (mean ± σ)',
+                    key: 'temporal',
+                    render: (_: unknown, row: (typeof thumbPlacementRows)[number]) =>
+                      row.stats && row.stats.sampleCount > 0
+                        ? `${row.stats.mean} ± ${row.stats.stdDev} [${row.stats.min}..${row.stats.max}]`
                         : '—',
                   },
                 ]}

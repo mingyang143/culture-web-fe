@@ -19,8 +19,25 @@ export type FingerName = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
 
 export interface FingerJointAngles {
   mcp: number; // Knuckle / base joint exterior bend angle in degrees (0 = straight, >90 = bent)
-  pip: number; // Middle joint exterior bend angle in degrees
+  pip: number; // Middle joint (or thumb IP joint) exterior bend angle in degrees
   dip?: number; // Outer joint exterior bend angle in degrees
+}
+
+export interface ThumbPalmPlacement {
+  /** Signed radial offset of THUMB_TIP (4) outside INDEX_MCP (5) along the palm lateral axis (palmScale = 1.0). Positive = abducted outward past index radial border; Negative = tucked/crossed inward across the palm. */
+  radialGapFromIndexMcp: number;
+  /** Signed radial offset of THUMB_IP (3) outside INDEX_MCP (5) along the palm lateral axis (palmScale = 1.0). */
+  ipRadialGapFromIndexMcp: number;
+  /** Normalized 3D Euclidean distance from THUMB_TIP (4) to INDEX_MCP (5) (palmScale = 1.0). */
+  tipToIndexMcp: number;
+  /** Normalized 3D Euclidean distance from THUMB_TIP (4) to MIDDLE_MCP (9) (palmScale = 1.0). */
+  tipToMiddleMcp: number;
+  /** Projection of THUMB_TIP (4) along the palm longitudinal axis (WRIST 0 -> MIDDLE_MCP 9, palmScale = 1.0). */
+  longitudinal: number;
+  /** Signed projection of THUMB_TIP (4) along the palm radial->ulnar lateral axis (palmScale = 1.0). */
+  lateral: number;
+  /** Signed projection of THUMB_TIP (4) along the palm normal axis (palmScale = 1.0). */
+  palmar: number;
 }
 
 export interface HandKinematics {
@@ -57,6 +74,9 @@ export interface HandKinematics {
     pinky: number; // distance(20, 17) / palmScale
   };
 
+  // Reusable palm-local thumb placement telemetry (distinguishes inward palmar placement vs outward radial abduction)
+  thumbPlacement?: ThumbPalmPlacement;
+
   // Palm orientation normal vector
   palmNormal: Landmark3D;
 }
@@ -65,6 +85,32 @@ export interface RequiredFingertipContact {
   pair: 'thumbIndex' | 'thumbMiddle' | 'thumbRing' | 'thumbPinky';
   label: string;
   maxDistance: number; // e.g. 0.35 in palm normalized scale
+  directive: string;
+}
+
+export type ThumbPlacementFeatureKey = keyof ThumbPalmPlacement;
+
+/**
+ * Reusable gesture-specific palm-relative thumb placement reference requirement.
+ * Expressed in palm-scale units (WRIST 0 -> MIDDLE_MCP 9 = 1.0) in the orthonormal
+ * palm coordinate frame so requirements remain invariant to camera distance, 2D rotation,
+ * and left/right handedness.
+ *
+ * NOTE: Keep inactive / unattached on canonical mudras until the intended physical
+ * form is verified with an authoritative reference or professor.
+ */
+export interface ThumbPlacementReferenceRequirement {
+  feature: ThumbPlacementFeatureKey;
+  label: string;
+  targetPalmRatio: number;
+  tolerancePalmRatio: number;
+  /** Optional hard upper bound in palm-scale units (e.g. radialGapFromIndexMcp <= 0.12 for inward thumb). */
+  maxAllowedPalmRatio?: number;
+  /** Optional hard lower bound in palm-scale units (e.g. radialGapFromIndexMcp >= 0.14 for abducted thumb). */
+  minAllowedPalmRatio?: number;
+  weight: number;
+  /** If true, acts as a mandatory pass gate (normalizedError <= 1.0 required for mastery). */
+  isMandatoryGate?: boolean;
   directive: string;
 }
 
@@ -85,6 +131,9 @@ export interface CanonicalMudra {
 
   // Physical fingertip contact constraints (e.g. thumb and index touching for Mudrakhya)
   requiredContacts?: RequiredFingertipContact[];
+
+  // Optional gesture-specific palm-relative thumb placement requirements (pending professor verification)
+  thumbPlacementRequirements?: ThumbPlacementReferenceRequirement[];
 
   // Target joint kinematics
   targets: {

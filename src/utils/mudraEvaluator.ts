@@ -357,12 +357,11 @@ export function stabilizeCoachingEvaluation(
     let minorDirective = currentEval.primaryDirective;
     let minorJointKey = currentEval.primaryJointKey ?? topMinor?.jointKey;
 
-    const stripRefinementPrefix = (text: string): string => {
-      const prefixMatch = text.match(
-        /^(?:Good Form — hold steady!|Good Form \(boundary grace, hold paused\) —) Optional refinement \([^)]+\): (.*)$/
+    const stripRefinementPrefix = (text: string): string =>
+      text.replace(
+        /^(?:(?:Good Form — hold steady!|Good Form \(boundary grace, hold paused\) —) Optional refinement \((?:[^()]|\([^()]*\))*?\):\s*)+/,
+        ''
       );
-      return prefixMatch ? prefixMatch[1] : text;
-    };
 
     if (topMinor) {
       const cleanedCurrent = stripRefinementPrefix(currentEval.primaryDirective);
@@ -769,9 +768,9 @@ export function evaluateMudraKinematics(
 
   const t = targetMudra.targets;
 
-  // Evaluate Thumb
+  // Evaluate Thumb (landmark 2 = THUMB_MCP, landmark 3 = THUMB_IP)
   checkJoint('thumb.mcp', 'Thumb Base (MCP)', kinematics.thumb.mcp, t.thumb.mcp);
-  checkJoint('thumb.pip', 'Thumb Knuckle (PIP)', kinematics.thumb.pip, t.thumb.pip);
+  checkJoint('thumb.pip', 'Thumb Joint (IP)', kinematics.thumb.pip, t.thumb.pip);
 
   // Evaluate Index
   checkJoint('index.mcp', 'Index Base (MCP)', kinematics.index.mcp, t.index.mcp);

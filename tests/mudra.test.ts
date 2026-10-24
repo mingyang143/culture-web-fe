@@ -819,9 +819,13 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(stabilizedNonSig.stabilizedEval.isMastered).toBe(true);
     expect(stabilizedNonSig.stabilizedEval.isFlawless).toBe(false);
     expect(stabilizedNonSig.stabilizedEval.primaryDirective).not.toContain('Within target ranges');
-    expect(stabilizedNonSig.stabilizedEval.primaryDirective).toContain(
-      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)):'
+    expect(stabilizedNonSig.stabilizedEval.primaryDirective).toBe(
+      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)): Your Pinky Base (MCP) is too bent by ~22°. Adjust to ~24°.'
     );
+    // Verify prefix is never recursively duplicated even when parenthesized joint labels are present
+    expect(
+      stabilizedNonSig.stabilizedEval.primaryDirective.split('Optional refinement (').length - 1
+    ).toBe(1);
 
     // 2. Hold-time accounting:
     //    (a) First valid frame establishes anchor (hasValidAnchor: true) and credits 0ms before an observed elapsed interval.
@@ -903,6 +907,205 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(stats.stdDev).toBeCloseTo(1.41, 2);
   });
 
+  test('paired Thripathaka reproduction: inward vs outward thumb with identical 4-finger posture, IP label verification, and palm-relative thumbPlacement', () => {
+    const buildThripathakaHand = (
+      thumbCmcDeg: number,
+      thumbMcpBendSignedDeg: number,
+      thumbIpBendSignedDeg: number
+    ): Landmark3D[] => {
+      const pts: Landmark3D[] = new Array(21).fill(null).map(() => ({ x: 0, y: 0, z: 0 }));
+      pts[0] = { x: 0, y: 0, z: 0 };
+
+      const buildChain = (
+        p0: Landmark3D,
+        baseAngleDeg: number,
+        lengths: [number, number, number],
+        mcpDeg: number,
+        pipDeg: number,
+        dipDeg: number
+      ): [Landmark3D, Landmark3D, Landmark3D] => {
+        const toRad = (d: number) => (d * Math.PI) / 180;
+        const a1 = toRad(baseAngleDeg);
+        const dir1 = {
+          x: Math.sin(a1),
+          y: Math.cos(a1) * Math.cos(toRad(mcpDeg)),
+          z: -Math.sin(toRad(mcpDeg)),
+        };
+        const p1 = {
+          x: p0.x + dir1.x * lengths[0],
+          y: p0.y + dir1.y * lengths[0],
+          z: p0.z + dir1.z * lengths[0],
+        };
+        const a2 = toRad(mcpDeg + pipDeg);
+        const dir2 = {
+          x: Math.sin(a1) * Math.cos(toRad(pipDeg)),
+          y: Math.cos(a1) * Math.cos(a2),
+          z: -Math.sin(a2),
+        };
+        const p2 = {
+          x: p1.x + dir2.x * lengths[1],
+          y: p1.y + dir2.y * lengths[1],
+          z: p1.z + dir2.z * lengths[1],
+        };
+        const a3 = toRad(mcpDeg + pipDeg + dipDeg);
+        const dir3 = {
+          x: Math.sin(a1) * Math.cos(toRad(pipDeg + dipDeg)),
+          y: Math.cos(a1) * Math.cos(a3),
+          z: -Math.sin(a3),
+        };
+        const p3 = {
+          x: p2.x + dir3.x * lengths[2],
+          y: p2.y + dir3.y * lengths[2],
+          z: p2.z + dir3.z * lengths[2],
+        };
+        return [p1, p2, p3];
+      };
+
+      // Identical 4-finger posture across all paired poses
+      pts[5] = { x: -0.019, y: 0.082, z: 0 };
+      [pts[6], pts[7], pts[8]] = buildChain(pts[5], -8, [0.028, 0.02, 0.016], 14, 16, 8);
+      pts[9] = { x: -0.005, y: 0.085, z: 0 };
+      [pts[10], pts[11], pts[12]] = buildChain(pts[9], 0, [0.03, 0.022, 0.017], 10, 16, 8);
+      pts[13] = { x: 0.009, y: 0.081, z: 0 };
+      [pts[14], pts[15], pts[16]] = buildChain(pts[13], 8, [0.028, 0.02, 0.016], 12, 18, 8);
+      pts[17] = { x: 0.022, y: 0.074, z: 0 };
+      [pts[18], pts[19], pts[20]] = buildChain(pts[17], 17, [0.024, 0.017, 0.014], 15, 15, 8);
+
+      // Thumb chain 1 -> 2 -> 3 -> 4
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      pts[1] = { x: -0.018, y: 0.024, z: -0.006 };
+      const a1 = toRad(thumbCmcDeg);
+      pts[2] = {
+        x: pts[1].x + Math.sin(a1) * 0.03,
+        y: pts[1].y + Math.cos(a1) * 0.03,
+        z: pts[1].z - 0.003,
+      };
+      const a2 = toRad(thumbCmcDeg + thumbMcpBendSignedDeg);
+      pts[3] = {
+        x: pts[2].x + Math.sin(a2) * 0.025,
+        y: pts[2].y + Math.cos(a2) * 0.025,
+        z: pts[2].z - 0.003,
+      };
+      const a3 = toRad(thumbCmcDeg + thumbMcpBendSignedDeg + thumbIpBendSignedDeg);
+      pts[4] = {
+        x: pts[3].x + Math.sin(a3) * 0.02,
+        y: pts[3].y + Math.cos(a3) * 0.02,
+        z: pts[3].z - 0.003,
+      };
+
+      return pts;
+    };
+
+    // Pose A: Approved inward-thumb Thripathaka (MCP ~26°, IP ~38°, tucked inward alongside palm)
+    const poseA = extractHandKinematics(buildThripathakaHand(-14, 26, 38), 'Right')!;
+    // Pose B1 (Screenshot 2): Outward extended thumb with MCP ~9°, IP ~22°
+    const poseB1 = extractHandKinematics(buildThripathakaHand(-38, -9, -22), 'Right')!;
+    // Pose B2 (Screenshot 1): Outward extended thumb with MCP ~9°, IP ~10° -> matchScore = 95%
+    const poseB2 = extractHandKinematics(buildThripathakaHand(-42, -9, -10), 'Right')!;
+    // Pose B3: Outward-bent thumb with exact target scalar angles MCP ~26°, IP ~38°
+    const poseB3 = extractHandKinematics(buildThripathakaHand(-25, -26, -38), 'Right')!;
+
+    // Verify 4 fingers are identical across all 4 paired poses
+    expect(poseB1.index).toEqual(poseA.index);
+    expect(poseB2.middle).toEqual(poseA.middle);
+    expect(poseB3.ring).toEqual(poseA.ring);
+    expect(poseB3.pinky).toEqual(poseA.pinky);
+
+    const evalA = evaluateMudraKinematics(poseA, CANONICAL_MUDRAS.thripathaka);
+    const evalB1 = evaluateMudraKinematics(poseB1, CANONICAL_MUDRAS.thripathaka);
+    const evalB2 = evaluateMudraKinematics(poseB2, CANONICAL_MUDRAS.thripathaka);
+    const evalB3 = evaluateMudraKinematics(poseB3, CANONICAL_MUDRAS.thripathaka);
+
+    // 1. Verify Thumb Joint (IP) label on vertex landmark 3 ('2-3-4')
+    const thumbIpEvalB1 = evalB1.jointEvaluations.find((j) => j.jointKey === 'thumb.pip')!;
+    expect(thumbIpEvalB1.label).toBe('Thumb Joint (IP)');
+    expect(thumbIpEvalB1.triplet).toBe('2-3-4');
+
+    // 2. Verify Screenshot 2 reproduction (Pose B1: MCP = 9° Δ-17° Match, IP = 22° Δ-16° Match)
+    const thumbMcpEvalB1 = evalB1.jointEvaluations.find((j) => j.jointKey === 'thumb.mcp')!;
+    expect(thumbMcpEvalB1.currentDegrees).toBe(9);
+    expect(thumbMcpEvalB1.deltaDegrees).toBe(-17);
+    expect(thumbMcpEvalB1.status).toBe('CORRECT');
+    expect(thumbIpEvalB1.currentDegrees).toBe(22);
+    expect(thumbIpEvalB1.deltaDegrees).toBe(-16);
+    expect(thumbIpEvalB1.status).toBe('CORRECT');
+    expect(evalB1.matchScore).toBe(99);
+    expect(evalB1.isMastered).toBe(true);
+
+    // 3. Verify Screenshot 1 reproduction (Pose B2: MCP = 9°, IP = 10° MINOR_DEVIATION -> 95% & isMastered = true)
+    expect(evalB2.matchScore).toBe(95);
+    expect(evalB2.isMastered).toBe(true);
+    expect(evalB2.isValidHoldFrame).toBe(true);
+    expect(evalB2.isFlawless).toBe(false);
+
+    // Multi-frame stabilization on Pose B2 must NEVER duplicate the "Optional refinement (...)" prefix
+    let anchorB2: CoachingAnchorState | null = null;
+    let holdB2: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    for (let f = 0; f < 62; f += 1) {
+      const stab = stabilizeCoachingEvaluation(evalB2, poseB2, anchorB2, 1000 + f * 34);
+      anchorB2 = stab.nextAnchor;
+      holdB2 = advanceHoldTimerState(holdB2, stab.stabilizedEval, 34, 2000);
+      expect(stab.stabilizedEval.primaryDirective).toBe(
+        'Good Form — hold steady! Optional refinement (Thumb Joint (IP)): In Kathakali Thripathaka (#17), bend your thumb inward at the joint while keeping all four fingers straight.'
+      );
+      expect(
+        stab.stabilizedEval.primaryDirective.split('Optional refinement (').length - 1
+      ).toBe(1);
+    }
+    expect(holdB2.isHoldMastered).toBe(true);
+    expect(holdB2.holdElapsedMs).toBe(2000);
+
+    // 4. Verify Pose B3 (outward-bent thumb with exact target angles 26°/38° scores 100% under scalar angles alone)
+    expect(evalB3.matchScore).toBe(100);
+    expect(evalB3.isFlawless).toBe(true);
+    expect(evalA.matchScore).toBe(100);
+
+    // 5. Verify palm-relative thumbPlacement cleanly separates inward Pose A from outward Poses B1, B2, B3
+    expect(poseA.thumbPlacement).toBeDefined();
+    expect(poseA.thumbPlacement!.radialGapFromIndexMcp).toBeLessThan(0); // tucked inward past Index MCP
+    expect(poseA.thumbPlacement!.tipToIndexMcp).toBeLessThan(0.35);
+    expect(poseA.thumbPlacement!.tipToMiddleMcp).toBeLessThan(0.3);
+
+    [poseB1, poseB2, poseB3].forEach((outwardPose) => {
+      expect(outwardPose.thumbPlacement!.radialGapFromIndexMcp).toBeGreaterThan(0.5); // abducted outward
+      expect(outwardPose.thumbPlacement!.tipToIndexMcp).toBeGreaterThan(0.6);
+      expect(outwardPose.thumbPlacement!.tipToMiddleMcp).toBeGreaterThan(0.75);
+    });
+
+    // Verify thumbPlacement is invariant to 3D translation, rotation, and uniform scale
+    const transformedHandA = transformLandmarks(
+      buildThripathakaHand(-14, 26, 38),
+      1.85,
+      { x: -3.2, y: 7.4, z: 1.9 },
+      -0.52,
+      0.38
+    );
+    const poseATransformed = extractHandKinematics(transformedHandA, 'Right')!;
+    expect(poseATransformed.thumbPlacement!.radialGapFromIndexMcp).toBeCloseTo(
+      poseA.thumbPlacement!.radialGapFromIndexMcp,
+      5
+    );
+    expect(poseATransformed.thumbPlacement!.tipToIndexMcp).toBeCloseTo(
+      poseA.thumbPlacement!.tipToIndexMcp,
+      5
+    );
+
+    // 6. Verify post-2.0s hold latching: once holdB2.isHoldMastered === true, subsequent non-passing frames keep isHoldMastered latched
+    const postHoldAfterInvalidFrame = advanceHoldTimerState(
+      holdB2,
+      {
+        ...evalB2,
+        isMastered: false,
+        isValidHoldFrame: false,
+        matchScore: 40,
+      },
+      500,
+      2000
+    );
+    expect(postHoldAfterInvalidFrame.isHoldMastered).toBe(true);
+    expect(postHoldAfterInvalidFrame.holdElapsedMs).toBe(2000);
+  });
+
   test('verifies layout stability across wide (1280px) and narrow (375px) viewports and telemetry snapshot', async ({
     page,
   }) => {
@@ -930,6 +1133,15 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
       // Vertical position of the card below AI Coach Feedback must remain locked (Δy = 0px)
       expect(Math.abs((boxAfter?.y ?? 0) - (boxBefore?.y ?? 0))).toBe(0);
+
+      // Verify feedback alert does not overflow its fixed-height container
+      const coachAlert = page.getByTestId('coach-feedback-alert');
+      await expect(coachAlert).toBeVisible();
+      const alertOverflow = await coachAlert.evaluate((el) => ({
+        scrollHeight: el.scrollHeight,
+        clientHeight: el.clientHeight,
+      }));
+      expect(alertOverflow.scrollHeight).toBeLessThanOrEqual(alertOverflow.clientHeight);
     };
 
     await verifyViewportStability(1280, 800);

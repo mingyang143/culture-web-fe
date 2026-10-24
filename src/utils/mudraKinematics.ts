@@ -291,6 +291,27 @@ export function extractHandKinematics(
   const rawNormal = crossProduct(vLong, vLat);
   const palmNormal = normalizeVector(rawNormal);
 
+  // Orthonormal palm coordinate basis (handedness-invariant radial->ulnar axis 5 -> 17)
+  const eLong = normalizeVector(vLong);
+  const uLatRaw = createVector(norm[5], norm[17]);
+  const uLatProj = dotProduct(uLatRaw, eLong);
+  const eUlnar = normalizeVector({
+    x: uLatRaw.x - uLatProj * eLong.x,
+    y: uLatRaw.y - uLatProj * eLong.y,
+    z: uLatRaw.z - uLatProj * eLong.z,
+  });
+  const vec5To4 = createVector(norm[5], norm[4]);
+  const vec5To3 = createVector(norm[5], norm[3]);
+  const thumbPlacement = {
+    radialGapFromIndexMcp: -dotProduct(vec5To4, eUlnar),
+    ipRadialGapFromIndexMcp: -dotProduct(vec5To3, eUlnar),
+    tipToIndexMcp: euclideanDistance3D(norm[4], norm[5]),
+    tipToMiddleMcp: euclideanDistance3D(norm[4], norm[9]),
+    longitudinal: dotProduct(norm[4], eLong),
+    lateral: dotProduct(norm[4], eUlnar),
+    palmar: dotProduct(norm[4], palmNormal),
+  };
+
   // Inter-fingertip normalized Euclidean distances (divided by palmScale = distance(0, 9))
   const tipDistances = {
     thumbIndex: euclideanDistance3D(norm[4], norm[8]),
@@ -323,6 +344,7 @@ export function extractHandKinematics(
     spreadRingPinky,
     tipDistances,
     fingerClosure,
+    thumbPlacement,
     palmNormal,
   };
 }
@@ -420,6 +442,33 @@ export function smoothHandKinematics(
       ring: blendDistance(prev.fingerClosure.ring, current.fingerClosure.ring),
       pinky: blendDistance(prev.fingerClosure.pinky, current.fingerClosure.pinky),
     },
+    thumbPlacement:
+      current.thumbPlacement && prev.thumbPlacement
+        ? {
+            radialGapFromIndexMcp: blendDistance(
+              prev.thumbPlacement.radialGapFromIndexMcp,
+              current.thumbPlacement.radialGapFromIndexMcp
+            ),
+            ipRadialGapFromIndexMcp: blendDistance(
+              prev.thumbPlacement.ipRadialGapFromIndexMcp,
+              current.thumbPlacement.ipRadialGapFromIndexMcp
+            ),
+            tipToIndexMcp: blendDistance(
+              prev.thumbPlacement.tipToIndexMcp,
+              current.thumbPlacement.tipToIndexMcp
+            ),
+            tipToMiddleMcp: blendDistance(
+              prev.thumbPlacement.tipToMiddleMcp,
+              current.thumbPlacement.tipToMiddleMcp
+            ),
+            longitudinal: blendDistance(
+              prev.thumbPlacement.longitudinal,
+              current.thumbPlacement.longitudinal
+            ),
+            lateral: blendDistance(prev.thumbPlacement.lateral, current.thumbPlacement.lateral),
+            palmar: blendDistance(prev.thumbPlacement.palmar, current.thumbPlacement.palmar),
+          }
+        : current.thumbPlacement,
     palmNormal: normalizeVector({
       x: blendDistance(prev.palmNormal.x, current.palmNormal.x),
       y: blendDistance(prev.palmNormal.y, current.palmNormal.y),
