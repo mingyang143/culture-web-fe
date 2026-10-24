@@ -85,7 +85,7 @@ export interface RequiredFingertipContact {
   pair: 'thumbIndex' | 'thumbMiddle' | 'thumbRing' | 'thumbPinky';
   label: string;
   maxDistance: number; // e.g. 0.35 in palm normalized scale
-  directive: string;
+  directive?: string;
 }
 
 export type ThumbPlacementFeatureKey = keyof ThumbPalmPlacement;
@@ -111,7 +111,7 @@ export interface ThumbPlacementReferenceRequirement {
   weight: number;
   /** If true, acts as a mandatory pass gate (normalizedError <= 1.0 required for mastery). */
   isMandatoryGate?: boolean;
-  directive: string;
+  directive?: string;
 }
 
 export interface JointTolerance {

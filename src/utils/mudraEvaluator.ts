@@ -3,7 +3,6 @@ import {
   CanonicalMudra,
   MudraEvaluationResult,
   MudraPoseStatus,
-  ThumbPlacementReferenceRequirement,
   JointEvaluation,
   CoachingAnchorState,
   HoldTimerState,
@@ -11,6 +10,30 @@ import {
 } from 'types/mudra';
 import { JOINT_TRIPLETS } from 'utils/mudraKinematics';
 import { CANONICAL_MUDRAS } from 'data/canonicalMudras';
+
+import {
+  formatFallbackDirective,
+  formatFallbackThumbPlacementDirective,
+  stripRefinementPrefix,
+  formatRefinementDirective,
+  formatJointBendingAdvice,
+  formatSpreadAdvice,
+  formatContactAdvice,
+  formatThumbPlacementAdvice,
+  getFriendlyFingerAndJoint,
+} from 'utils/mudraCoachingTemplates';
+
+export {
+  formatFallbackDirective,
+  formatFallbackThumbPlacementDirective,
+  stripRefinementPrefix,
+  formatRefinementDirective,
+  formatJointBendingAdvice,
+  formatSpreadAdvice,
+  formatContactAdvice,
+  formatThumbPlacementAdvice,
+  getFriendlyFingerAndJoint,
+};
 
 export const PASS_ENTRY_SCORE = 88;
 export const PASS_EXIT_SCORE = 85;
@@ -36,66 +59,6 @@ export function matchesPedagogicalRule(
 }
 
 /**
- * Generates direction-consistent fallback text when no explicit pedagogical rule matches
- */
-export function formatFallbackDirective(evaluation: JointEvaluation): string {
-  if (evaluation.unit === 'palmRatio' || evaluation.jointKey.startsWith('contact.')) {
-    return `${evaluation.label} distance is ${evaluation.currentDegrees.toFixed(2)} palm widths (target ≤ ${evaluation.targetDegrees.toFixed(2)}). Bring fingertips closer together.`;
-  }
-  if (evaluation.jointKey.startsWith('thumbPlacement.')) {
-    const feature = evaluation.jointKey.replace('thumbPlacement.', '');
-    if (feature === 'radialGapFromIndexMcp') {
-      return evaluation.deltaDegrees > 0
-        ? 'Tuck thumb inward closer to palm face (reduce lateral abduction).'
-        : 'Extend thumb outward away from palm face.';
-    }
-    if (feature === 'tipToIndexMcp') {
-      return 'Bring thumb tip closer to index knuckle.';
-    }
-    if (feature === 'tipToMiddleMcp') {
-      return 'Bring thumb tip closer to middle knuckle.';
-    }
-    return `Adjust ${evaluation.label} to within target range.`;
-  }
-  const isSpread = evaluation.jointKey.startsWith('spread');
-  let direction = evaluation.deltaDegrees > 0 ? 'too bent' : 'too straight';
-  if (isSpread) {
-    direction = evaluation.deltaDegrees > 0 ? 'too wide' : 'too narrow';
-  }
-  return `Your ${evaluation.label} is ${direction} by ~${Math.abs(evaluation.deltaDegrees)}°. Adjust to ~${evaluation.targetDegrees}°.`;
-}
-
-/**
- * Generates feature-specific structured correction for palm-relative thumb placement
- * without any hardcoded gesture names in generic evaluation.
- */
-export function formatFallbackThumbPlacementDirective(
-  req: ThumbPlacementReferenceRequirement,
-  actualVal?: number
-): string {
-  if (req.directive) return req.directive;
-  if (typeof actualVal !== 'number' || !Number.isFinite(actualVal)) {
-    return `${req.label}: measurement unavailable, keep thumb visible`;
-  }
-  switch (req.feature) {
-    case 'radialGapFromIndexMcp':
-      return actualVal > (req.maxAllowedPalmRatio ?? req.targetPalmRatio)
-        ? 'Tuck thumb inward closer to palm face (reduce lateral abduction).'
-        : 'Extend thumb outward away from palm face.';
-    case 'tipToIndexMcp':
-      return 'Bring thumb tip closer to index knuckle.';
-    case 'tipToMiddleMcp':
-      return 'Bring thumb tip closer to middle knuckle.';
-    case 'palmar':
-      return 'Flatten thumb closer to the palmar surface.';
-    case 'ipRadialGapFromIndexMcp':
-      return 'Keep thumb joint aligned with index finger boundary.';
-    default:
-      return `Adjust ${req.label} to within target range.`;
-  }
-}
-
-/**
  * Resolves a joint discrepancy into a directive using identical condition-matching logic
  * for both primary and secondary coaching tips.
  */
@@ -103,7 +66,7 @@ export function resolveJointDirective(
   targetMudra: CanonicalMudra,
   evaluation: JointEvaluation
 ): string {
-  const matchingRule = targetMudra.pedagogicalRules.find((rule) =>
+  const matchingRule = targetMudra.pedagogicalRules?.find((rule) =>
     matchesPedagogicalRule(rule, evaluation)
   );
   return matchingRule ? matchingRule.directive : formatFallbackDirective(evaluation);
@@ -432,9 +395,7 @@ export function stabilizeCoachingEvaluation(
       const baseRuleText = targetMudra
         ? resolveJointDirective(targetMudra, topMinor)
         : formatFallbackDirective(topMinor);
-      minorDirective = isValidHoldFrame
-        ? `Good Form — hold steady! Optional refinement (${topMinor.label}): ${baseRuleText}`
-        : `Good Form (boundary grace, hold paused) — Optional refinement (${topMinor.label}): ${baseRuleText}`;
+      minorDirective = formatRefinementDirective(baseRuleText, topMinor.label, !isValidHoldFrame);
       minorJointKey = topMinor.jointKey;
     } else {
       minorDirective = isValidHoldFrame
@@ -1216,7 +1177,8 @@ export function evaluateMudraKinematics(
     // Passing form with 1+ permitted non-signature MINOR_DEVIATION (orange) joints: never display "Within target ranges"
     if (incorrectJoints.length > 0) {
       const topMinor = incorrectJoints[0];
-      primaryDirective = `Good Form — hold steady! Optional refinement (${topMinor.label}): ${resolveJointDirective(targetMudra, topMinor)}`;
+      const baseRuleText = resolveJointDirective(targetMudra, topMinor);
+      primaryDirective = formatRefinementDirective(baseRuleText, topMinor.label, false);
       primaryJointKey = topMinor.jointKey;
     } else {
       primaryDirective =

@@ -74,31 +74,6 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
         directive:
           'In Kathakali Pathaka (#1), bend your ring finger forward at the middle joint while keeping the other fingers straight.',
       },
-      {
-        jointKey: 'ring.mcp',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Flex your ring finger forward from the knuckle toward your palm.',
-      },
-      {
-        jointKey: 'index.pip',
-        condition: 'TOO_BENT',
-        directive: 'Straighten your index finger completely.',
-      },
-      {
-        jointKey: 'middle.pip',
-        condition: 'TOO_BENT',
-        directive: 'Extend your middle finger straight upward.',
-      },
-      {
-        jointKey: 'pinky.pip',
-        condition: 'TOO_BENT',
-        directive: 'Keep your pinky finger extended straight while the ring finger bends.',
-      },
-      {
-        jointKey: 'spreadIndexMiddle',
-        condition: 'TOO_WIDE',
-        directive: 'Bring your straight index and middle fingers closer together.',
-      },
     ],
   },
 
@@ -153,26 +128,6 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
         jointKey: 'index.pip',
         condition: 'TOO_STRAIGHT',
         directive: 'Curl your index finger down so its tip meets the tip of your thumb.',
-      },
-      {
-        jointKey: 'index.mcp',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Bend your index knuckle forward to form the circular pinch with your thumb.',
-      },
-      {
-        jointKey: 'middle.pip',
-        condition: 'TOO_BENT',
-        directive: 'Keep your middle finger extended straight while pinching thumb and index.',
-      },
-      {
-        jointKey: 'ring.pip',
-        condition: 'TOO_BENT',
-        directive: 'Extend your ring finger straight upward.',
-      },
-      {
-        jointKey: 'pinky.pip',
-        condition: 'TOO_BENT',
-        directive: 'Extend your pinky finger straight upward.',
       },
     ],
   },
@@ -241,16 +196,6 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
         condition: 'TOO_STRAIGHT',
         directive: 'Curl your index finger forward so its tip touches the tip of your thumb.',
       },
-      {
-        jointKey: 'ring.pip',
-        condition: 'TOO_BENT',
-        directive: 'Extend your ring finger straight upward alongside your pinky finger.',
-      },
-      {
-        jointKey: 'pinky.pip',
-        condition: 'TOO_BENT',
-        directive: 'Keep your pinky finger extended straight upward.',
-      },
     ],
   },
 
@@ -293,26 +238,6 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       },
     },
     pedagogicalRules: [
-      {
-        jointKey: 'index.pip',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Curl your index finger tightly into your palm to form a closed fist.',
-      },
-      {
-        jointKey: 'middle.pip',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Fold your middle finger firmly into your palm.',
-      },
-      {
-        jointKey: 'ring.pip',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Tuck your ring finger completely into the fist.',
-      },
-      {
-        jointKey: 'pinky.pip',
-        condition: 'TOO_STRAIGHT',
-        directive: 'Curl your pinky finger tightly into your palm.',
-      },
       {
         jointKey: 'thumb.pip',
         condition: 'TOO_STRAIGHT',
@@ -400,26 +325,6 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
         condition: 'TOO_BENT',
         directive:
           'Keep your ring finger completely straight for Kathakali Thripathaka (bending the ring finger forms Pathaka #1).',
-      },
-      {
-        jointKey: 'index.pip',
-        condition: 'TOO_BENT',
-        directive: 'Keep your index finger completely straight.',
-      },
-      {
-        jointKey: 'middle.pip',
-        condition: 'TOO_BENT',
-        directive: 'Keep your middle finger completely straight.',
-      },
-      {
-        jointKey: 'pinky.pip',
-        condition: 'TOO_BENT',
-        directive: 'Extend your pinky finger straight alongside your ring finger.',
-      },
-      {
-        jointKey: 'spreadIndexMiddle',
-        condition: 'TOO_WIDE',
-        directive: 'Hold your four extended fingers closely together.',
       },
     ],
   },

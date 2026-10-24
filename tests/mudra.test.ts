@@ -23,7 +23,15 @@ import {
   stabilizeCoachingEvaluation,
   advanceHoldTimerState,
   getNormalizedJointError,
+  formatFallbackDirective,
   formatFallbackThumbPlacementDirective,
+  stripRefinementPrefix,
+  formatRefinementDirective,
+  formatJointBendingAdvice,
+  formatSpreadAdvice,
+  formatContactAdvice,
+  formatThumbPlacementAdvice,
+  getFriendlyFingerAndJoint,
   WITHIN_TARGET_RANGES_DIRECTIVE,
   STATUS_EXIT_HYSTERESIS_RATIO,
 } from 'utils/mudraEvaluator';
@@ -258,10 +266,13 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     };
 
     const resOverBent = evaluateMudraKinematics(overBentMushti, CANONICAL_MUDRAS.mushti);
-    expect(resOverBent.primaryDirective).toContain('Index Middle (PIP) is too bent by ~65°');
+    expect(resOverBent.primaryDirective).toBe(
+      'Straighten your index finger slightly at the middle joint (PIP).'
+    );
     expect(resOverBent.secondaryDirective).toBeDefined();
-    expect(resOverBent.secondaryDirective).toContain('Pinky Knuckle (PIP) is too bent by ~60°');
-    expect(resOverBent.secondaryDirective).not.toContain('Curl your pinky');
+    expect(resOverBent.secondaryDirective).toBe(
+      'Straighten your pinky finger slightly at the middle joint (PIP).'
+    );
 
     // Case 2: Both index.pip (-75° under 95° target) and pinky.pip (-62° under 92° target) are TOO_STRAIGHT.
     const underBentMushti: typeof baseKinematics = {
@@ -275,9 +286,11 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
     const resUnderBent = evaluateMudraKinematics(underBentMushti, CANONICAL_MUDRAS.mushti);
     expect(resUnderBent.primaryDirective).toBe(
-      'Curl your index finger tightly into your palm to form a closed fist.'
+      'Bend your index finger slightly more at the middle joint (PIP).'
     );
-    expect(resUnderBent.secondaryDirective).toBe('Curl your pinky finger tightly into your palm.');
+    expect(resUnderBent.secondaryDirective).toBe(
+      'Bend your pinky finger slightly more at the middle joint (PIP).'
+    );
   });
 
   test('evaluates all configured spread targets (spreadIndexMiddle, spreadMiddleRing, spreadRingPinky)', () => {
@@ -311,8 +324,8 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       'spreadRingPinky',
     ]);
     expect(evalThripathaka.isMastered).toBe(false);
-    expect(evalThripathaka.primaryDirective).toContain('Ring-Pinky Gap is too wide by ~30°');
-    expect(evalThripathaka.secondaryDirective).toContain('Middle-Ring Gap is too wide by ~22°');
+    expect(evalThripathaka.primaryDirective).toBe('Bring your ring finger and pinky finger closer together.');
+    expect(evalThripathaka.secondaryDirective).toBe('Bring your middle finger and ring finger closer together.');
   });
 
   test('validates Kathakali Pathaka (#1), Mudrakhyam (#2), Katakam (#3), Mushti (#4), and Thripathaka (#17) with cross-mudra disambiguation', () => {
@@ -920,7 +933,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(stabilizedNonSig.stabilizedEval.isFlawless).toBe(false);
     expect(stabilizedNonSig.stabilizedEval.primaryDirective).not.toContain('Within target ranges');
     expect(stabilizedNonSig.stabilizedEval.primaryDirective).toBe(
-      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)): Your Pinky Base (MCP) is too bent by ~22°. Adjust to ~24°.'
+      'Good Form — hold steady! Optional refinement (Pinky Base (MCP)): Straighten your pinky finger slightly at the base knuckle (MCP).'
     );
     // Verify prefix is never recursively duplicated even when parenthesized joint labels are present
     expect(
@@ -1308,7 +1321,9 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     const initialPrimaryJoint = stab1.stabilizedEval.primaryJointKey;
     const initialPrimaryDirective = stab1.stabilizedEval.primaryDirective;
     expect(initialPrimaryJoint).toBe('index.pip');
-    expect(initialPrimaryDirective).toBe('Straighten your index finger completely.');
+    expect(initialPrimaryDirective).toBe(
+      'Straighten your index finger slightly at the middle joint (PIP).'
+    );
 
     // Frames 2-19 (simulated 30 FPS over 600ms): noise causes raw primary to flip back and forth between Index and Middle
     for (let f = 1; f <= 18; f += 1) {
@@ -1325,9 +1340,13 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       anchor = stab.nextAnchor;
 
       expect(stab.stabilizedEval.primaryJointKey).toBe('index.pip');
-      expect(stab.stabilizedEval.primaryDirective).toBe('Straighten your index finger completely.');
+      expect(stab.stabilizedEval.primaryDirective).toBe(
+        'Straighten your index finger slightly at the middle joint (PIP).'
+      );
       expect(stab.stabilizedEval.secondaryJointKey).toBe('middle.pip');
-      expect(stab.stabilizedEval.secondaryDirective).toBe('Extend your middle finger straight upward.');
+      expect(stab.stabilizedEval.secondaryDirective).toBe(
+        'Straighten your middle finger slightly at the middle joint (PIP).'
+      );
     }
 
     // Immediate Release on Correction: student straightens Index (pip: 16° CORRECT)
@@ -1343,7 +1362,9 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
 
     // Anchor is immediately released without any delay, advancing to Middle!
     expect(stabFixed.stabilizedEval.primaryJointKey).toBe('middle.pip');
-    expect(stabFixed.stabilizedEval.primaryDirective).toBe('Extend your middle finger straight upward.');
+    expect(stabFixed.stabilizedEval.primaryDirective).toBe(
+      'Straighten your middle finger slightly at the middle joint (PIP).'
+    );
 
     // Contact Escalation: in a mudra requiring contact (e.g. Mudrakhyam), breaking contact escalates immediately
     const mudrakhyamPose = {
@@ -1387,11 +1408,13 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     const bentAnchor = stabBent.nextAnchor;
 
     expect(stabBent.stabilizedEval.primaryJointKey).toBe('ring.pip');
-    expect(stabBent.stabilizedEval.primaryDirective).toContain('too bent by ~38°');
+    expect(stabBent.stabilizedEval.primaryDirective).toBe(
+      'Straighten your ring finger slightly at the middle joint (PIP).'
+    );
     expect(bentAnchor?.primaryDirectionSign).toBe(1);
 
     // Frame 2: Student overshoots and straightens ring.pip to 15° (TOO_STRAIGHT by -43°)
-    // The anchor MUST be invalidated immediately (0ms delay) to avoid retaining stale "too bent" wording!
+    // The anchor MUST be invalidated immediately (0ms delay) to avoid retaining stale "Straighten" wording!
     now += 33.3;
     const ringStraightPose: typeof baseKinematics = {
       ...ringBentPose,
@@ -1407,7 +1430,7 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     );
 
     expect(stabStraight.stabilizedEval.primaryJointKey).toBe('ring.pip');
-    expect(stabStraight.stabilizedEval.primaryDirective).not.toContain('too bent');
+    expect(stabStraight.stabilizedEval.primaryDirective).not.toContain('Straighten your ring finger');
     expect(stabStraight.stabilizedEval.primaryDirective).toContain(
       'In Kathakali Pathaka (#1), bend your ring finger forward at the middle joint'
     );
@@ -1544,27 +1567,35 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       label: 'Thumb Lateral Offset',
       targetPalmRatio: -0.1,
       tolerancePalmRatio: 0.25,
+      minAllowedPalmRatio: -0.35,
       maxAllowedPalmRatio: 0.15,
       weight: 3.0,
       directive: '', // no explicit gesture directive in configuration
     };
     const fallbackDir = formatFallbackThumbPlacementDirective(radialReq, 0.45);
-    expect(fallbackDir).toBe('Tuck thumb inward closer to palm face (reduce lateral abduction).');
+    expect(fallbackDir).toBe('Tuck your thumb inward closer to your palm face.');
     expect(fallbackDir).not.toContain('Thripathaka');
     expect(fallbackDir).not.toContain('Kathakali');
+
+    const inwardDir = formatFallbackThumbPlacementDirective(radialReq, -0.45);
+    expect(inwardDir).toBe('Move your thumb slightly outward away from the center of your palm.');
 
     const tipReq: ThumbPlacementReferenceRequirement = {
       feature: 'tipToIndexMcp',
       label: 'Thumb-Index Distance',
       targetPalmRatio: 0.25,
       tolerancePalmRatio: 0.2,
+      minAllowedPalmRatio: 0.05,
       maxAllowedPalmRatio: 0.45,
       weight: 2.0,
       directive: '',
     };
     const tipFallback = formatFallbackThumbPlacementDirective(tipReq, 0.65);
-    expect(tipFallback).toBe('Bring thumb tip closer to index knuckle.');
+    expect(tipFallback).toBe('Bring your thumb tip closer to the base of your fingers.');
     expect(tipFallback).not.toContain('Thripathaka');
+
+    const tipClose = formatFallbackThumbPlacementDirective(tipReq, 0.02);
+    expect(tipClose).toBe('Move your thumb tip slightly farther from the base of your fingers.');
   });
 
   test('verifies Thripathaka canonical configuration matches Hastalakshana Deepika (#17): all four fingers straight (ring PIP target 18°±16°), not Bharatanatyam bent-ring form', () => {
@@ -1716,5 +1747,179 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     await expect(snapshotPre).toBeVisible();
     await expect(snapshotPre).toContainText('"mudraId": "thripathaka"');
     await expect(snapshotPre).toContainText('"recentFrameTrace"');
+  });
+
+  test('validates shared, gesture-independent corrective advice templates and two-sided bound reversals across mudras', () => {
+    // 1. User-friendly anatomical terminology (enforces "thumb IP joint", not "thumb PIP")
+    const thumbIP = getFriendlyFingerAndJoint('thumb.pip');
+    expect(thumbIP.finger).toBe('thumb');
+    expect(thumbIP.joint).toBe('IP joint');
+
+    const thumbMCP = getFriendlyFingerAndJoint('thumb.mcp');
+    expect(thumbMCP.joint).toBe('base knuckle (MCP)');
+
+    const indexPIP = getFriendlyFingerAndJoint('index.pip');
+    expect(indexPIP.finger).toBe('index finger');
+    expect(indexPIP.joint).toBe('middle joint (PIP)');
+
+    // 2. Opposite bend directions (TOO_STRAIGHT vs TOO_BENT)
+    expect(formatJointBendingAdvice('thumb.pip', -15, 'Thumb IP')).toBe(
+      'Bend your thumb slightly more at the IP joint.'
+    );
+    expect(formatJointBendingAdvice('thumb.pip', 20, 'Thumb IP')).toBe(
+      'Straighten your thumb slightly at the IP joint.'
+    );
+    expect(formatJointBendingAdvice('ring.pip', -25, 'Ring PIP')).toBe(
+      'Bend your ring finger slightly more at the middle joint (PIP).'
+    );
+    expect(formatJointBendingAdvice('ring.pip', 30, 'Ring PIP')).toBe(
+      'Straighten your ring finger slightly at the middle joint (PIP).'
+    );
+
+    // 3. Opposite spread directions (TOO_WIDE vs TOO_NARROW)
+    expect(formatSpreadAdvice('spreadIndexMiddle', 14, 'Index-Middle Gap')).toBe(
+      'Bring your index finger and middle finger closer together.'
+    );
+    expect(formatSpreadAdvice('spreadIndexMiddle', -12, 'Index-Middle Gap')).toBe(
+      'Spread your index finger and middle finger farther apart.'
+    );
+    expect(formatSpreadAdvice('spreadMiddleRing', 10, 'Middle-Ring Gap')).toBe(
+      'Bring your middle finger and ring finger closer together.'
+    );
+    expect(formatSpreadAdvice('spreadRingPinky', -8, 'Ring-Pinky Gap')).toBe(
+      'Spread your ring finger and pinky finger farther apart.'
+    );
+
+    // 4. Contact / proximity guidance (standard touch vs configured minimum separation)
+    expect(formatContactAdvice('Thumb & Index Fingertips', 0.55, [0, 0.45])).toBe(
+      'Bring your thumb & index fingertips closer together to touch.'
+    );
+    expect(formatContactAdvice('Thumb & Index Fingertips', 0.05, [0.2, 0.5])).toBe(
+      'Separate your thumb & index fingertips farther apart.'
+    );
+    expect(formatContactAdvice('Thumb & Index Fingertips', undefined)).toBe(
+      'Measurement unavailable for Thumb & Index Fingertips — keep hand fully visible in frame.'
+    );
+
+    // 5. Two-sided thumb-placement bounds reversal
+    // Outward abduction (violates max bound) -> instructs inward
+    expect(
+      formatThumbPlacementAdvice('radialGapFromIndexMcp', 0.35, [-0.35, 0.18])
+    ).toBe('Tuck your thumb inward closer to your palm face.');
+    // Over-tucked inward (violates min bound) -> instructs outward (never instructs inward when already past inward limit!)
+    expect(
+      formatThumbPlacementAdvice('radialGapFromIndexMcp', -0.45, [-0.35, 0.18])
+    ).toBe('Move your thumb slightly outward away from the center of your palm.');
+
+    // Distance to index knuckle: too far vs too close
+    expect(formatThumbPlacementAdvice('tipToIndexMcp', 0.7, [0.05, 0.62])).toBe(
+      'Bring your thumb tip closer to the base of your fingers.'
+    );
+    expect(formatThumbPlacementAdvice('tipToIndexMcp', 0.02, [0.05, 0.62])).toBe(
+      'Move your thumb tip slightly farther from the base of your fingers.'
+    );
+
+    // Unknown feature semantics: does not prescribe a fabricated direction
+    expect(formatThumbPlacementAdvice('customNonStandardFeature', 0.5)).toBe(
+      'Adjust Thumb Placement to within target range.'
+    );
+
+    // 6. Shared wording across multiple mudras using the same feature types
+    const baseHand = extractHandKinematics(createSyntheticWorldHand(), 'Right')!;
+    const bentIndexPose: typeof baseHand = {
+      ...baseHand,
+      index: { mcp: 14, pip: 70, dip: 10 }, // index.pip too bent (>16°)
+    };
+
+    const evalPathaka = evaluateMudraKinematics(bentIndexPose, CANONICAL_MUDRAS.pathaka);
+    const evalThripathaka = evaluateMudraKinematics(bentIndexPose, CANONICAL_MUDRAS.thripathaka);
+
+    const expectedIndexBentAdvice = 'Straighten your index finger slightly at the middle joint (PIP).';
+    expect(evalPathaka.primaryDirective).toBe(expectedIndexBentAdvice);
+    expect(evalThripathaka.primaryDirective).toBe(expectedIndexBentAdvice);
+
+    // Mudrakhyam with over-bent middle finger (>20° target) shares the exact same straightening template
+    const bentMiddleMudrakhyam: typeof baseHand = {
+      ...baseHand,
+      thumb: { mcp: 22, pip: 18 },
+      index: { mcp: 55, pip: 62, dip: 10 },
+      middle: { mcp: 18, pip: 65, dip: 10 }, // middle.pip too bent
+      tipDistances: { ...baseHand.tipDistances, thumbIndex: 0.15 }, // touch contact satisfied
+    };
+    const evalMudrakhyam = evaluateMudraKinematics(bentMiddleMudrakhyam, CANONICAL_MUDRAS.mudrakhyam);
+    expect(evalMudrakhyam.primaryDirective).toBe(
+      'Straighten your middle finger slightly at the middle joint (PIP).'
+    );
+
+    // Mushti with under-bent index finger (<95° target) shares the exact same bending template
+    const straightIndexMushti: typeof baseHand = {
+      ...baseHand,
+      thumb: { mcp: 35, pip: 42 },
+      index: { mcp: 78, pip: 20, dip: 10 }, // index.pip too straight
+      middle: { mcp: 78, pip: 95, dip: 80 },
+      ring: { mcp: 75, pip: 95, dip: 80 },
+      pinky: { mcp: 75, pip: 92, dip: 80 },
+    };
+    const evalMushti = evaluateMudraKinematics(straightIndexMushti, CANONICAL_MUDRAS.mushti);
+    expect(evalMushti.primaryDirective).toBe(
+      'Bend your index finger slightly more at the middle joint (PIP).'
+    );
+
+    // 7. Wrapper idempotency: never nests or duplicates "Optional refinement (...)"
+    const rawAdvice = 'Straighten your ring finger slightly at the middle joint (PIP).';
+    const wrappedOnce = formatRefinementDirective(rawAdvice, 'Ring Knuckle (PIP)', false);
+    expect(wrappedOnce).toBe(
+      'Good Form — hold steady! Optional refinement (Ring Knuckle (PIP)): Straighten your ring finger slightly at the middle joint (PIP).'
+    );
+    expect(stripRefinementPrefix(wrappedOnce)).toBe(rawAdvice);
+
+    const wrappedTwice = formatRefinementDirective(wrappedOnce, 'Ring Knuckle (PIP)', false);
+    expect(wrappedTwice).toBe(wrappedOnce);
+    expect(wrappedTwice.split('Optional refinement (').length - 1).toBe(1);
+    expect(stripRefinementPrefix(wrappedTwice)).toBe(rawAdvice);
+
+    const pausedWrapped = formatRefinementDirective(wrappedTwice, 'Ring Knuckle (PIP)', true);
+    expect(pausedWrapped).toBe(
+      'Good Form (boundary grace, hold paused) — Optional refinement (Ring Knuckle (PIP)): Straighten your ring finger slightly at the middle joint (PIP).'
+    );
+    expect(pausedWrapped.split('Optional refinement (').length - 1).toBe(1);
+    expect(stripRefinementPrefix(pausedWrapped)).toBe(rawAdvice);
+
+    // 8. formatFallbackDirective unit checks
+    const unavailableJe: JointEvaluation = {
+      jointKey: 'index.pip',
+      label: 'Index Middle (PIP)',
+      unit: 'deg',
+      currentDegrees: 0,
+      targetDegrees: 16,
+      toleranceDegrees: 16,
+      acceptedRange: [0, 32],
+      deltaDegrees: 0,
+      normalizedError: 9.99,
+      weight: 1.5,
+      status: 'INCORRECT',
+    };
+    expect(formatFallbackDirective(unavailableJe)).toBe(
+      'Measurement unavailable for Index Middle (PIP) — keep hand fully visible in frame.'
+    );
+
+    // 9. Unchanged assessment outputs for canonical passing inputs
+    const cleanPathakaPose: typeof baseHand = {
+      ...baseHand,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 }, // bent forward for Kathakali Pathaka
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+    const cleanPathaka = evaluateMudraKinematics(cleanPathakaPose, CANONICAL_MUDRAS.pathaka);
+    expect(cleanPathaka.isMastered).toBe(true);
+    expect(cleanPathaka.isValidHoldFrame).toBe(true);
+    expect(cleanPathaka.matchScore).toBeGreaterThanOrEqual(88);
+    expect(cleanPathaka.poseStatus).toBe('ALL_CRITERIA_WITHIN_RANGE');
+    expect(cleanPathaka.primaryDirective).toBe(WITHIN_TARGET_RANGES_DIRECTIVE);
   });
 });
