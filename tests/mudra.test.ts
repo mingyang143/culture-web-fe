@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { Landmark3D, CoachingAnchorState, HoldTimerState } from 'types/mudra';
+import {
+  Landmark3D,
+  CoachingAnchorState,
+  HoldTimerState,
+  ThumbPlacementReferenceRequirement,
+  MudraEvaluationResult,
+} from 'types/mudra';
 import {
   calculateJointAngle,
   calculateSpreadAngle,
@@ -17,6 +23,7 @@ import {
   stabilizeCoachingEvaluation,
   advanceHoldTimerState,
   getNormalizedJointError,
+  formatFallbackThumbPlacementDirective,
   WITHIN_TARGET_RANGES_DIRECTIVE,
   STATUS_EXIT_HYSTERESIS_RATIO,
 } from 'utils/mudraEvaluator';
@@ -129,18 +136,46 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     );
     expect(foldedDeg).toBeCloseTo(180, 5);
 
-    // Degenerate zero-length and non-finite inputs return 0 (never NaN)
+    // Degenerate zero-length and non-finite inputs return NaN (never valid 0° measurements)
     expect(
-      calculateJointAngle({ x: 1, y: 1, z: 1 }, { x: 1, y: 1, z: 1 }, { x: 2, y: 2, z: 2 })
-    ).toBe(0);
-    expect(
-      calculateJointAngle(
-        { x: Number.NaN, y: 0, z: 0 },
-        { x: 0, y: 1, z: 0 },
-        { x: 0, y: 2, z: 0 }
+      Number.isNaN(
+        calculateJointAngle({ x: 1, y: 1, z: 1 }, { x: 1, y: 1, z: 1 }, { x: 2, y: 2, z: 2 })
       )
-    ).toBe(0);
-    expect(calculateSpreadAngle({ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 })).toBe(0);
+    ).toBe(true);
+    expect(
+      Number.isNaN(
+        calculateJointAngle(
+          { x: Number.NaN, y: 0, z: 0 },
+          { x: 0, y: 1, z: 0 },
+          { x: 0, y: 2, z: 0 }
+        )
+      )
+    ).toBe(true);
+    expect(
+      Number.isNaN(calculateSpreadAngle({ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }))
+    ).toBe(true);
+
+    // Verify unavailable geometry propagates consistently through scoring and timing:
+    // Degenerate landmarks with NaN or zero-length bone return null kinematics
+    const degenerateHand = createSyntheticWorldHand();
+    degenerateHand[6] = { x: degenerateHand[5].x, y: degenerateHand[5].y, z: degenerateHand[5].z }; // collapsed zero-length index bone 5->6
+    const degenKinematics = extractHandKinematics(degenerateHand, 'Right');
+    expect(degenKinematics).toBeNull();
+
+    // Evaluating null kinematics returns MEASUREMENT_UNAVAILABLE and score 0
+    const degenEval = evaluateMudraKinematics(degenKinematics, CANONICAL_MUDRAS.pathaka);
+    expect(degenEval.measurementStatus).toBe('MEASUREMENT_UNAVAILABLE');
+    expect(degenEval.matchScore).toBe(0);
+    expect(degenEval.isMastered).toBe(false);
+
+    // Timing hard-resets on MEASUREMENT_UNAVAILABLE
+    const resetTimer = advanceHoldTimerState(
+      { holdElapsedMs: 1200, dropoutElapsedMs: 0, isHoldMastered: false, hasValidAnchor: true },
+      degenEval,
+      33
+    );
+    expect(resetTimer.holdElapsedMs).toBe(0);
+    expect(resetTimer.hasValidAnchor).toBe(false);
   });
 
   test('enforces translation, rigid 3D rotation, and uniform-scale invariance on worldLandmarks', () => {
@@ -1086,30 +1121,45 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(thumbIpEvalB1.label).toBe('Thumb Joint (IP)');
     expect(thumbIpEvalB1.triplet).toBe('2-3-4');
 
-    // 2. Verify Screenshot 2 reproduction (Pose B1: MCP = 9° Δ-17° Match, IP = 22° Δ-16° Match)
-    const thumbMcpEvalB1 = evalB1.jointEvaluations.find((j) => j.jointKey === 'thumb.mcp')!;
-    expect(thumbMcpEvalB1.currentDegrees).toBe(9);
-    expect(thumbMcpEvalB1.deltaDegrees).toBe(-17);
-    expect(thumbMcpEvalB1.status).toBe('CORRECT');
-    expect(thumbIpEvalB1.currentDegrees).toBe(22);
-    expect(thumbIpEvalB1.deltaDegrees).toBe(-16);
-    expect(thumbIpEvalB1.status).toBe('CORRECT');
-    expect(evalB1.matchScore).toBe(99);
-    expect(evalB1.isMastered).toBe(true);
+    // 2. Pose A (Approved inward-thumb Thripathaka) passes with 100% match score and flawless mastery
+    expect(evalA.matchScore).toBe(100);
+    expect(evalA.isMastered).toBe(true);
+    expect(evalA.isValidHoldFrame).toBe(true);
+    expect(evalA.isFlawless).toBe(true);
+    expect(evalA.primaryDirective).toBe(WITHIN_TARGET_RANGES_DIRECTIVE);
 
-    // 3. Verify Screenshot 1 reproduction (Pose B2: MCP = 9°, IP = 10° MINOR_DEVIATION -> 95% & isMastered = true)
-    expect(evalB2.matchScore).toBe(95);
-    expect(evalB2.isMastered).toBe(true);
-    expect(evalB2.isValidHoldFrame).toBe(true);
-    expect(evalB2.isFlawless).toBe(false);
+    // 3. Paired Rejection Evidence: Pose B3 has exact 26°/38° scalar angles but abducted outward thumb
+    // Must be actively REJECTED by thumbPlacement requirements with score <= 65% and corrective directive
+    expect(evalB3.matchScore).toBeLessThanOrEqual(65);
+    expect(evalB3.isMastered).toBe(false);
+    expect(evalB3.isValidHoldFrame).toBe(false);
+    expect(evalB3.isFlawless).toBe(false);
+    expect(evalB2.isMastered).toBe(false); // Outward Pose B2 is likewise rejected by thumb placement
 
-    // Multi-frame stabilization on Pose B2 must NEVER duplicate the "Optional refinement (...)" prefix
-    let anchorB2: CoachingAnchorState | null = null;
-    let holdB2: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
+    const placementEvalB3 = evalB3.jointEvaluations.find(
+      (j) => j.jointKey === 'thumbPlacement.radialGapFromIndexMcp'
+    );
+    expect(placementEvalB3).toBeDefined();
+    expect(placementEvalB3?.status).toBe('INCORRECT');
+    expect(placementEvalB3?.rawValue).toBeGreaterThan(0.5); // abducted outward >0.5
+    expect(evalB3.primaryDirective).toContain(
+      'In Kathakali Thripathaka (#17), tuck your thumb inward alongside your palm face rather than abducting outward.'
+    );
+
+    // 4. Inward pose with permitted minor IP deviation (MCP 26°, IP 18° -> matchScore >= 88%, isMastered = true)
+    const poseAMinor = extractHandKinematics(buildThripathakaHand(-14, 26, 18), 'Right')!;
+    const evalAMinor = evaluateMudraKinematics(poseAMinor, CANONICAL_MUDRAS.thripathaka);
+    expect(evalAMinor.isMastered).toBe(true);
+    expect(evalAMinor.isValidHoldFrame).toBe(true);
+    expect(evalAMinor.isFlawless).toBe(false);
+
+    // Multi-frame stabilization on poseAMinor must NEVER duplicate the "Optional refinement (...)" prefix
+    let anchorAMinor: CoachingAnchorState | null = null;
+    let holdAMinor: HoldTimerState = { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false };
     for (let f = 0; f < 62; f += 1) {
-      const stab = stabilizeCoachingEvaluation(evalB2, poseB2, anchorB2, 1000 + f * 34);
-      anchorB2 = stab.nextAnchor;
-      holdB2 = advanceHoldTimerState(holdB2, stab.stabilizedEval, 34, 2000);
+      const stab = stabilizeCoachingEvaluation(evalAMinor, poseAMinor, anchorAMinor, 1000 + f * 34);
+      anchorAMinor = stab.nextAnchor;
+      holdAMinor = advanceHoldTimerState(holdAMinor, stab.stabilizedEval, 34, 2000);
       expect(stab.stabilizedEval.primaryDirective).toBe(
         'Good Form — hold steady! Optional refinement (Thumb Joint (IP)): In Kathakali Thripathaka (#17), bend your thumb inward at the joint while keeping all four fingers straight.'
       );
@@ -1117,13 +1167,8 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
         stab.stabilizedEval.primaryDirective.split('Optional refinement (').length - 1
       ).toBe(1);
     }
-    expect(holdB2.isHoldMastered).toBe(true);
-    expect(holdB2.holdElapsedMs).toBe(2000);
-
-    // 4. Verify Pose B3 (outward-bent thumb with exact target angles 26°/38° scores 100% under scalar angles alone)
-    expect(evalB3.matchScore).toBe(100);
-    expect(evalB3.isFlawless).toBe(true);
-    expect(evalA.matchScore).toBe(100);
+    expect(holdAMinor.isHoldMastered).toBe(true);
+    expect(holdAMinor.holdElapsedMs).toBe(2000);
 
     // 5. Verify palm-relative thumbPlacement cleanly separates inward Pose A from outward Poses B1, B2, B3
     expect(poseA.thumbPlacement).toBeDefined();
@@ -1155,11 +1200,11 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       5
     );
 
-    // 6. Verify post-2.0s hold latching: once holdB2.isHoldMastered === true, subsequent non-passing frames keep isHoldMastered latched
+    // 6. Verify post-2.0s hold latching: once holdAMinor.isHoldMastered === true, subsequent non-passing frames keep isHoldMastered latched
     const postHoldAfterInvalidFrame = advanceHoldTimerState(
-      holdB2,
+      holdAMinor,
       {
-        ...evalB2,
+        ...evalAMinor,
         isMastered: false,
         isValidHoldFrame: false,
         matchScore: 40,
@@ -1169,6 +1214,453 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     );
     expect(postHoldAfterInvalidFrame.isHoldMastered).toBe(true);
     expect(postHoldAfterInvalidFrame.holdElapsedMs).toBe(2000);
+
+    // 7. Mandatory thumb placement requirements cannot be bypassed by missing, NaN, infinite, or out-of-bounds metrics:
+    // a. Missing thumbPlacement object entirely:
+    const poseMissingThumb: typeof poseA = {
+      ...poseA,
+      thumbPlacement: undefined,
+    };
+    const evalMissingThumb = evaluateMudraKinematics(poseMissingThumb, CANONICAL_MUDRAS.thripathaka);
+    expect(evalMissingThumb.isMastered).toBe(false);
+    expect(evalMissingThumb.isValidHoldFrame).toBe(false);
+    expect(evalMissingThumb.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
+    const timerMissingThumb = advanceHoldTimerState(
+      { holdElapsedMs: 500, dropoutElapsedMs: 0, isHoldMastered: false, hasValidAnchor: true },
+      evalMissingThumb,
+      33
+    );
+    expect(timerMissingThumb.hasValidAnchor).toBe(false);
+
+    // b. NaN radial gap:
+    const poseNaNThumb: typeof poseA = {
+      ...poseA,
+      thumbPlacement: {
+        ...poseA.thumbPlacement!,
+        radialGapFromIndexMcp: NaN,
+      },
+    };
+    const evalNaNThumb = evaluateMudraKinematics(poseNaNThumb, CANONICAL_MUDRAS.thripathaka);
+    expect(evalNaNThumb.isMastered).toBe(false);
+    expect(evalNaNThumb.isValidHoldFrame).toBe(false);
+    expect(evalNaNThumb.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
+
+    // c. Infinite radial gap:
+    const poseInfThumb: typeof poseA = {
+      ...poseA,
+      thumbPlacement: {
+        ...poseA.thumbPlacement!,
+        radialGapFromIndexMcp: Infinity,
+      },
+    };
+    const evalInfThumb = evaluateMudraKinematics(poseInfThumb, CANONICAL_MUDRAS.thripathaka);
+    expect(evalInfThumb.isMastered).toBe(false);
+    expect(evalInfThumb.isValidHoldFrame).toBe(false);
+
+    // d. tipToIndexMcp exceeds configured maxAllowedPalmRatio (0.45):
+    const poseFarTipThumb: typeof poseA = {
+      ...poseA,
+      thumbPlacement: {
+        ...poseA.thumbPlacement!,
+        tipToIndexMcp: 0.58, // exceeds 0.45
+      },
+    };
+    const evalFarTipThumb = evaluateMudraKinematics(poseFarTipThumb, CANONICAL_MUDRAS.thripathaka);
+    expect(evalFarTipThumb.isMastered).toBe(false);
+    expect(evalFarTipThumb.isValidHoldFrame).toBe(false);
+    const tipEval = evalFarTipThumb.jointEvaluations.find(
+      (j) => j.jointKey === 'thumbPlacement.tipToIndexMcp'
+    )!;
+    expect(tipEval).toBeDefined();
+    expect(tipEval.status).not.toBe('CORRECT');
+  });
+
+  test('verifies coaching feedback stability: prevents alternating instruction jitter between competing joints, releases immediately on correction, and escalates on critical errors', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right');
+    expect(baseKinematics).not.toBeNull();
+    if (!baseKinematics) return;
+
+    // Simulate a student attempting Pathaka where both Index and Middle are bent
+    // Index PIP (target 16°±18°) and Middle PIP (target 17°±18°) are both INCORRECT
+    // Natural webcam noise causes top error to alternate between Index and Middle
+    const competingPoseA: typeof baseKinematics = {
+      ...baseKinematics,
+      index: { mcp: 18, pip: 55, dip: 12 }, // delta 39° -> higher penalty on Frame 1
+      middle: { mcp: 16, pip: 50, dip: 10 }, // delta 33°
+      ring: { mcp: 42, pip: 58, dip: 10 }, // target 42°/58° (CORRECT)
+      pinky: { mcp: 24, pip: 18, dip: 10 }, // target 24°/18° (CORRECT)
+      thumb: { mcp: 20, pip: 16 }, // target 20°/16° (CORRECT)
+    };
+
+    const competingPoseB: typeof baseKinematics = {
+      ...competingPoseA,
+      index: { mcp: 18, pip: 50, dip: 12 }, // delta 34°
+      middle: { mcp: 16, pip: 55, dip: 10 }, // delta 38° -> higher penalty on Frame 2
+    };
+
+    let anchor: CoachingAnchorState | null = null;
+    let now = 1000;
+
+    // Frame 1: Pose A -> establishes anchor on Index PIP
+    const evalA = evaluateMudraKinematics(competingPoseA, CANONICAL_MUDRAS.pathaka);
+    const stab1 = stabilizeCoachingEvaluation(evalA, competingPoseA, anchor, now, 1000);
+    anchor = stab1.nextAnchor;
+    const initialPrimaryJoint = stab1.stabilizedEval.primaryJointKey;
+    const initialPrimaryDirective = stab1.stabilizedEval.primaryDirective;
+    expect(initialPrimaryJoint).toBe('index.pip');
+    expect(initialPrimaryDirective).toBe('Straighten your index finger completely.');
+
+    // Frames 2-19 (simulated 30 FPS over 600ms): noise causes raw primary to flip back and forth between Index and Middle
+    for (let f = 1; f <= 18; f += 1) {
+      now += 33.3;
+      const pose = f % 2 === 1 ? competingPoseB : competingPoseA;
+      const rawEval = evaluateMudraKinematics(pose, CANONICAL_MUDRAS.pathaka);
+
+      // Verify that the RAW evaluation flips every frame
+      const expectedRawJoint = f % 2 === 1 ? 'middle.pip' : 'index.pip';
+      expect(rawEval.primaryJointKey).toBe(expectedRawJoint);
+
+      // Verify that the STABILIZED evaluation remains rock-solid on Index (zero instruction flip-flopping)
+      const stab = stabilizeCoachingEvaluation(rawEval, pose, anchor, now, 1000);
+      anchor = stab.nextAnchor;
+
+      expect(stab.stabilizedEval.primaryJointKey).toBe('index.pip');
+      expect(stab.stabilizedEval.primaryDirective).toBe('Straighten your index finger completely.');
+      expect(stab.stabilizedEval.secondaryJointKey).toBe('middle.pip');
+      expect(stab.stabilizedEval.secondaryDirective).toBe('Extend your middle finger straight upward.');
+    }
+
+    // Immediate Release on Correction: student straightens Index (pip: 16° CORRECT)
+    now += 33.3;
+    const fixedIndexPose: typeof baseKinematics = {
+      ...competingPoseA,
+      index: { mcp: 18, pip: 16, dip: 12 }, // Index is now fixed!
+      middle: { mcp: 16, pip: 55, dip: 10 }, // Middle is still bent
+    };
+    const rawFixedEval = evaluateMudraKinematics(fixedIndexPose, CANONICAL_MUDRAS.pathaka);
+    const stabFixed = stabilizeCoachingEvaluation(rawFixedEval, fixedIndexPose, anchor, now, 1000);
+    anchor = stabFixed.nextAnchor;
+
+    // Anchor is immediately released without any delay, advancing to Middle!
+    expect(stabFixed.stabilizedEval.primaryJointKey).toBe('middle.pip');
+    expect(stabFixed.stabilizedEval.primaryDirective).toBe('Extend your middle finger straight upward.');
+
+    // Contact Escalation: in a mudra requiring contact (e.g. Mudrakhyam), breaking contact escalates immediately
+    const mudrakhyamPose = {
+      ...baseKinematics,
+      index: { mcp: 40, pip: 30, dip: 15 },
+      tipDistances: { thumbIndex: 0.15, thumbMiddle: 0.8, thumbRing: 0.9, thumbPinky: 0.95 },
+    };
+    const mudrakhyamEval = evaluateMudraKinematics(mudrakhyamPose, CANONICAL_MUDRAS.mudrakhyam);
+    const stabMudra = stabilizeCoachingEvaluation(mudrakhyamEval, mudrakhyamPose, null, now, 1000);
+    const mudraAnchor = stabMudra.nextAnchor;
+
+    // Break contact: thumb and index separate to 0.65 palmRatio
+    now += 33.3;
+    const brokenContactPose = {
+      ...mudrakhyamPose,
+      tipDistances: { ...mudrakhyamPose.tipDistances, thumbIndex: 0.65 },
+    };
+    const brokenContactEval = evaluateMudraKinematics(brokenContactPose, CANONICAL_MUDRAS.mudrakhyam);
+    const stabBroken = stabilizeCoachingEvaluation(brokenContactEval, brokenContactPose, mudraAnchor, now, 1000);
+
+    // Contact failure immediately preempts without waiting for dwell time
+    expect(stabBroken.stabilizedEval.primaryJointKey).toBe('contact.thumbIndex');
+    expect(stabBroken.stabilizedEval.primaryDirective).toContain(
+      'Touch the tip of your index finger directly to the tip of your thumb'
+    );
+
+    // Direction Inversion Test (TOO_BENT -> TOO_STRAIGHT):
+    // In Pathaka, ring.pip target is 58° ± 28° [30°..86°].
+    // Frame 1: ring.pip is 96° (TOO_BENT by +38° > 28° tolerance)
+    now += 33.3;
+    const ringBentPose: typeof baseKinematics = {
+      ...baseKinematics,
+      ring: { mcp: 42, pip: 96, dip: 10 },
+      middle: { mcp: 16, pip: 17, dip: 10 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      pinky: { mcp: 24, pip: 18, dip: 10 },
+      thumb: { mcp: 20, pip: 16 },
+    };
+    const rawBentEval = evaluateMudraKinematics(ringBentPose, CANONICAL_MUDRAS.pathaka);
+    const stabBent = stabilizeCoachingEvaluation(rawBentEval, ringBentPose, null, now, 1000);
+    const bentAnchor = stabBent.nextAnchor;
+
+    expect(stabBent.stabilizedEval.primaryJointKey).toBe('ring.pip');
+    expect(stabBent.stabilizedEval.primaryDirective).toContain('too bent by ~38°');
+    expect(bentAnchor?.primaryDirectionSign).toBe(1);
+
+    // Frame 2: Student overshoots and straightens ring.pip to 15° (TOO_STRAIGHT by -43°)
+    // The anchor MUST be invalidated immediately (0ms delay) to avoid retaining stale "too bent" wording!
+    now += 33.3;
+    const ringStraightPose: typeof baseKinematics = {
+      ...ringBentPose,
+      ring: { mcp: 42, pip: 15, dip: 10 },
+    };
+    const rawStraightEval = evaluateMudraKinematics(ringStraightPose, CANONICAL_MUDRAS.pathaka);
+    const stabStraight = stabilizeCoachingEvaluation(
+      rawStraightEval,
+      ringStraightPose,
+      bentAnchor,
+      now,
+      1000
+    );
+
+    expect(stabStraight.stabilizedEval.primaryJointKey).toBe('ring.pip');
+    expect(stabStraight.stabilizedEval.primaryDirective).not.toContain('too bent');
+    expect(stabStraight.stabilizedEval.primaryDirective).toContain(
+      'In Kathakali Pathaka (#1), bend your ring finger forward at the middle joint'
+    );
+    expect(stabStraight.nextAnchor?.primaryDirectionSign).toBe(-1);
+
+    // Completed-Hold Achievement vs Current-Pose Assessment Separation:
+    // Once hold is mastered, hold achievement remains latched at 2000ms:
+    const completedHoldState: HoldTimerState = {
+      holdElapsedMs: 2000,
+      dropoutElapsedMs: 0,
+      isHoldMastered: true,
+      hasValidAnchor: true,
+    };
+
+    // But current pose evaluation on an incorrect pose reflects the CURRENT error:
+    const incorrectEval = evaluateMudraKinematics(ringStraightPose, CANONICAL_MUDRAS.pathaka);
+    expect(incorrectEval.isMastered).toBe(false);
+    expect(incorrectEval.matchScore).toBeLessThan(88);
+
+    const postHoldTimer = advanceHoldTimerState(completedHoldState, incorrectEval, 33, 2000);
+    // Achievement is preserved:
+    expect(postHoldTimer.isHoldMastered).toBe(true);
+    expect(postHoldTimer.holdElapsedMs).toBe(2000);
+    // But current pose is honestly reported as non-mastered:
+    expect(incorrectEval.isMastered).toBe(false);
+    expect(incorrectEval.primaryDirective).toContain('bend your ring finger forward');
+  });
+
+  test('verifies that changing primaryDirective wording cannot alter timer behaviour or hold accumulation', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right')!;
+    const pathakaPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+    const passingEval = evaluateMudraKinematics(pathakaPose, CANONICAL_MUDRAS.pathaka);
+    expect(passingEval.isMastered).toBe(true);
+    expect(passingEval.poseStatus).toBe('ALL_CRITERIA_WITHIN_RANGE');
+
+    const initialTimer: HoldTimerState = {
+      holdElapsedMs: 1000,
+      dropoutElapsedMs: 0,
+      hasValidAnchor: true,
+      isHoldMastered: false,
+    };
+
+    // Frame with original directive
+    const timerOriginal = advanceHoldTimerState(initialTimer, passingEval, 100);
+
+    // Frame with completely arbitrary, mutated primaryDirective string
+    const mutatedEval: MudraEvaluationResult = {
+      ...passingEval,
+      primaryDirective: 'Completely different custom message with random text 98765!',
+    };
+    const timerMutated = advanceHoldTimerState(initialTimer, mutatedEval, 100);
+
+    expect(timerMutated.holdElapsedMs).toBe(timerOriginal.holdElapsedMs);
+    expect(timerMutated.hasValidAnchor).toBe(timerOriginal.hasValidAnchor);
+    expect(timerMutated.isHoldMastered).toBe(timerOriginal.isHoldMastered);
+    expect(timerMutated.dropoutElapsedMs).toBe(timerOriginal.dropoutElapsedMs);
+  });
+
+  test('verifies explicit poseStatus structured states distinguish all criteria within range, permitted deviations, boundary grace, and measurement unavailable', () => {
+    // 1. Measurement unavailable
+    const degenEval = evaluateMudraKinematics(null, CANONICAL_MUDRAS.pathaka);
+    expect(degenEval.poseStatus).toBe('MEASUREMENT_UNAVAILABLE');
+
+    // 2. All criteria within range (isFlawless === true)
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right')!;
+    const pathakaPose: typeof baseKinematics = {
+      ...baseKinematics,
+      thumb: { mcp: 19, pip: 14 },
+      index: { mcp: 18, pip: 16, dip: 12 },
+      middle: { mcp: 15, pip: 17, dip: 11 },
+      ring: { mcp: 38, pip: 53, dip: 10 },
+      pinky: { mcp: 26, pip: 18, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 33,
+      spreadRingPinky: 40,
+    };
+    const flawlessEval = evaluateMudraKinematics(pathakaPose, CANONICAL_MUDRAS.pathaka);
+    expect(flawlessEval.isFlawless).toBe(true);
+    expect(flawlessEval.poseStatus).toBe('ALL_CRITERIA_WITHIN_RANGE');
+
+    // 3. Passing with permitted deviations (isMastered === true, isValidHoldFrame === true, isFlawless === false)
+    const minorKin: typeof pathakaPose = {
+      ...pathakaPose,
+      pinky: { ...pathakaPose.pinky, pip: 40 }, // non-signature deviation (target 18°±18°, 40° is 1.22x tolerance)
+    };
+    const minorEval = evaluateMudraKinematics(minorKin, CANONICAL_MUDRAS.pathaka);
+    expect(minorEval.isMastered).toBe(true);
+    expect(minorEval.isValidHoldFrame).toBe(true);
+    expect(minorEval.isFlawless).toBe(false);
+    expect(minorEval.poseStatus).toBe('PASSING_WITH_PERMITTED_DEVIATIONS');
+
+    // 4. Boundary grace paused: evaluate via stabilizeCoachingEvaluation with exit hysteresis
+    const anchor: CoachingAnchorState = {
+      mudraId: 'pathaka',
+      anchorVector: extractKinematicsFeatureVector(pathakaPose),
+      primaryDirective: 'Within target ranges.',
+      wasMastered: true,
+      wasValidHoldFrame: true,
+      wasFlawless: true,
+      updatedAtMs: 1000,
+    };
+    const exitGraceEval: MudraEvaluationResult = {
+      ...minorEval,
+      matchScore: 86, // between PASS_EXIT_SCORE (85) and PASS_ENTRY_SCORE (88)
+    };
+    const stabGrace = stabilizeCoachingEvaluation(exitGraceEval, minorKin, anchor, 1050);
+    expect(stabGrace.stabilizedEval.isMastered).toBe(true);
+    expect(stabGrace.stabilizedEval.isValidHoldFrame).toBe(false);
+    expect(stabGrace.stabilizedEval.poseStatus).toBe('BOUNDARY_GRACE_PAUSED');
+
+    // 5. Actionable adjustment on failing pose
+    const failingKin: typeof pathakaPose = {
+      ...pathakaPose,
+      index: { ...pathakaPose.index, pip: 80 }, // severe deviation on signature joint
+    };
+    const failingEval = evaluateMudraKinematics(failingKin, CANONICAL_MUDRAS.pathaka);
+    expect(failingEval.isMastered).toBe(false);
+    expect(failingEval.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
+  });
+
+  test('verifies generic evaluation emits feature-specific corrections for thumb placement without hardcoded gesture names', () => {
+    const radialReq: ThumbPlacementReferenceRequirement = {
+      feature: 'radialGapFromIndexMcp',
+      label: 'Thumb Lateral Offset',
+      targetPalmRatio: -0.1,
+      tolerancePalmRatio: 0.25,
+      maxAllowedPalmRatio: 0.15,
+      weight: 3.0,
+      directive: '', // no explicit gesture directive in configuration
+    };
+    const fallbackDir = formatFallbackThumbPlacementDirective(radialReq, 0.45);
+    expect(fallbackDir).toBe('Tuck thumb inward closer to palm face (reduce lateral abduction).');
+    expect(fallbackDir).not.toContain('Thripathaka');
+    expect(fallbackDir).not.toContain('Kathakali');
+
+    const tipReq: ThumbPlacementReferenceRequirement = {
+      feature: 'tipToIndexMcp',
+      label: 'Thumb-Index Distance',
+      targetPalmRatio: 0.25,
+      tolerancePalmRatio: 0.2,
+      maxAllowedPalmRatio: 0.45,
+      weight: 2.0,
+      directive: '',
+    };
+    const tipFallback = formatFallbackThumbPlacementDirective(tipReq, 0.65);
+    expect(tipFallback).toBe('Bring thumb tip closer to index knuckle.');
+    expect(tipFallback).not.toContain('Thripathaka');
+  });
+
+  test('verifies Thripathaka canonical configuration matches Hastalakshana Deepika (#17): all four fingers straight (ring PIP target 18°±16°), not Bharatanatyam bent-ring form', () => {
+    const { thripathaka } = CANONICAL_MUDRAS;
+    expect(thripathaka.targets.ring.pip.targetDegrees).toBe(18);
+    expect(thripathaka.targets.ring.pip.toleranceDegrees).toBe(16);
+    expect(thripathaka.targets.index.pip.targetDegrees).toBe(16);
+    expect(thripathaka.targets.middle.pip.targetDegrees).toBe(16);
+    expect(thripathaka.targets.pinky.pip.targetDegrees).toBe(16);
+    expect(thripathaka.description).toContain('all four fingers');
+  });
+
+  test('investigates and verifies Thripathaka live acceptance discrepancy: straight thumb vs inward-bent thumb', () => {
+    const baseKinematics = extractHandKinematics(createSyntheticWorldHand(), 'Right')!;
+    const fourFingersStraight = {
+      index: { mcp: 14, pip: 16, dip: 10 },
+      middle: { mcp: 10, pip: 16, dip: 10 },
+      ring: { mcp: 12, pip: 18, dip: 10 },
+      pinky: { mcp: 15, pip: 15, dip: 10 },
+      spreadIndexMiddle: 8,
+      spreadMiddleRing: 8,
+      spreadRingPinky: 10,
+    };
+
+    // Pose 1: User straightens thumb along with the fingers (adducted alongside index)
+    // - Joint bend angles are within tolerance: MCP 14° (target 26°±18°), IP 22° (target 38°±20°)
+    // - Thumb tip is adjacent to index MCP: tipToIndexMcp = 0.28 <= 0.45, radialGapFromIndexMcp = 0.10 <= 0.15
+    const straightThumbPose: typeof baseKinematics = {
+      ...baseKinematics,
+      ...fourFingersStraight,
+      thumb: { mcp: 14, pip: 22 },
+      thumbPlacement: {
+        ...baseKinematics.thumbPlacement!,
+        radialGapFromIndexMcp: 0.1, // within maxAllowedPalmRatio: 0.15
+        tipToIndexMcp: 0.28, // within maxAllowedPalmRatio: 0.45
+      },
+    };
+
+    const evalStraight = evaluateMudraKinematics(straightThumbPose, CANONICAL_MUDRAS.thripathaka);
+    expect(evalStraight.isMastered).toBe(true);
+    expect(evalStraight.isValidHoldFrame).toBe(true);
+    expect(evalStraight.matchScore).toBeGreaterThanOrEqual(88);
+    const straightTimer = advanceHoldTimerState(
+      { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false },
+      evalStraight,
+      33
+    );
+    expect(straightTimer.hasValidAnchor).toBe(true);
+
+    // Pose 2: User bends thumb inward toward palm face
+    // - Joint bend angles are at canonical target: MCP 26°, IP 38°
+    // - Inward flexion moves thumb tip towards palm center away from index MCP: tipToIndexMcp = 0.52 > 0.45
+    const inwardThumbPose: typeof baseKinematics = {
+      ...baseKinematics,
+      ...fourFingersStraight,
+      thumb: { mcp: 26, pip: 38 },
+      thumbPlacement: {
+        ...baseKinematics.thumbPlacement!,
+        radialGapFromIndexMcp: -0.15, // tucked inward past index MCP (passes <= 0.15)
+        tipToIndexMcp: 0.52, // exceeds maxAllowedPalmRatio: 0.45
+      },
+    };
+
+    const evalInward = evaluateMudraKinematics(inwardThumbPose, CANONICAL_MUDRAS.thripathaka);
+
+    // 1. Root Cause Analysis: Capped at 65% and hold accumulation blocked
+    expect(evalInward.isMastered).toBe(false);
+    expect(evalInward.isValidHoldFrame).toBe(false);
+    expect(evalInward.matchScore).toBe(65);
+    expect(evalInward.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
+    expect(evalInward.primaryDirective).toBe(
+      'Keep your thumb tip tucked closely alongside the base of your fingers on the palm.'
+    );
+
+    // 2. Explains why the skeleton was drawn entirely green:
+    // Joint flexion evaluations for thumb and fingers are all CORRECT
+    const thumbMcpEval = evalInward.jointEvaluations.find((j) => j.jointKey === 'thumb.mcp')!;
+    const thumbPipEval = evalInward.jointEvaluations.find((j) => j.jointKey === 'thumb.pip')!;
+    expect(thumbMcpEval.status).toBe('CORRECT');
+    expect(thumbPipEval.status).toBe('CORRECT');
+
+    // Only the thumb placement requirement failed:
+    const tipPlacementEval = evalInward.jointEvaluations.find(
+      (j) => j.jointKey === 'thumbPlacement.tipToIndexMcp'
+    )!;
+    expect(tipPlacementEval.status).not.toBe('CORRECT');
+
+    // 3. Hold timer does NOT accumulate time on failing inward pose
+    const inwardTimer = advanceHoldTimerState(
+      { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false },
+      evalInward,
+      33
+    );
+    expect(inwardTimer.holdElapsedMs).toBe(0); // no hold progress credited
+    expect(inwardTimer.hasValidAnchor).toBe(false);
+    expect(inwardTimer.isHoldMastered).toBe(false);
   });
 
   test('verifies layout stability across wide (1280px) and narrow (375px) viewports and telemetry snapshot', async ({

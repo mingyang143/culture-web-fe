@@ -2,12 +2,15 @@ import {
   HandKinematics,
   CanonicalMudra,
   MudraEvaluationResult,
+  MudraPoseStatus,
+  ThumbPlacementReferenceRequirement,
   JointEvaluation,
   CoachingAnchorState,
   HoldTimerState,
   TemporalFeatureStats,
 } from 'types/mudra';
 import { JOINT_TRIPLETS } from 'utils/mudraKinematics';
+import { CANONICAL_MUDRAS } from 'data/canonicalMudras';
 
 export const PASS_ENTRY_SCORE = 88;
 export const PASS_EXIT_SCORE = 85;
@@ -39,12 +42,57 @@ export function formatFallbackDirective(evaluation: JointEvaluation): string {
   if (evaluation.unit === 'palmRatio' || evaluation.jointKey.startsWith('contact.')) {
     return `${evaluation.label} distance is ${evaluation.currentDegrees.toFixed(2)} palm widths (target ≤ ${evaluation.targetDegrees.toFixed(2)}). Bring fingertips closer together.`;
   }
+  if (evaluation.jointKey.startsWith('thumbPlacement.')) {
+    const feature = evaluation.jointKey.replace('thumbPlacement.', '');
+    if (feature === 'radialGapFromIndexMcp') {
+      return evaluation.deltaDegrees > 0
+        ? 'Tuck thumb inward closer to palm face (reduce lateral abduction).'
+        : 'Extend thumb outward away from palm face.';
+    }
+    if (feature === 'tipToIndexMcp') {
+      return 'Bring thumb tip closer to index knuckle.';
+    }
+    if (feature === 'tipToMiddleMcp') {
+      return 'Bring thumb tip closer to middle knuckle.';
+    }
+    return `Adjust ${evaluation.label} to within target range.`;
+  }
   const isSpread = evaluation.jointKey.startsWith('spread');
   let direction = evaluation.deltaDegrees > 0 ? 'too bent' : 'too straight';
   if (isSpread) {
     direction = evaluation.deltaDegrees > 0 ? 'too wide' : 'too narrow';
   }
   return `Your ${evaluation.label} is ${direction} by ~${Math.abs(evaluation.deltaDegrees)}°. Adjust to ~${evaluation.targetDegrees}°.`;
+}
+
+/**
+ * Generates feature-specific structured correction for palm-relative thumb placement
+ * without any hardcoded gesture names in generic evaluation.
+ */
+export function formatFallbackThumbPlacementDirective(
+  req: ThumbPlacementReferenceRequirement,
+  actualVal?: number
+): string {
+  if (req.directive) return req.directive;
+  if (typeof actualVal !== 'number' || !Number.isFinite(actualVal)) {
+    return `${req.label}: measurement unavailable, keep thumb visible`;
+  }
+  switch (req.feature) {
+    case 'radialGapFromIndexMcp':
+      return actualVal > (req.maxAllowedPalmRatio ?? req.targetPalmRatio)
+        ? 'Tuck thumb inward closer to palm face (reduce lateral abduction).'
+        : 'Extend thumb outward away from palm face.';
+    case 'tipToIndexMcp':
+      return 'Bring thumb tip closer to index knuckle.';
+    case 'tipToMiddleMcp':
+      return 'Bring thumb tip closer to middle knuckle.';
+    case 'palmar':
+      return 'Flatten thumb closer to the palmar surface.';
+    case 'ipRadialGapFromIndexMcp':
+      return 'Keep thumb joint aligned with index finger boundary.';
+    default:
+      return `Adjust ${req.label} to within target range.`;
+  }
 }
 
 /**
@@ -173,15 +221,19 @@ export function areKinematicsVectorsSimilar(
  * 4. Strict `isFlawless` ("Within target ranges") gating: `"Within target ranges..."` is strictly reserved
  *    for frames where `isValidHoldFrame` is true AND every evaluated target criterion is satisfied
  *    (`status === 'CORRECT'` and `normalizedError <= 1.0` across all features, regardless of weight).
- * 5. Fast cross-joint error switching: when a new joint becomes the primary error, coaching updates
- *    immediately on severe/signature/contact errors or after at most 250ms on minor non-signature ties.
+ * 5. Sticky cross-joint guidance with pedagogical priority escalation:
+ *    - Coached joint remains anchored for at least minDwellMs (1000ms) or as long as kinematics
+ *      vectors remain similar, eliminating rapid alternating between competing errors (e.g. index vs thumb).
+ *    - Immediate release (0ms delay) occurs when the user corrects the coached joint (status === 'CORRECT').
+ *    - Priority escalation pre-empts the anchor immediately only if a defining physical contact breaks,
+ *      if a severe error ('INCORRECT') emerges over a minor deviation, or if a new error penalty surges by >= 40%.
  */
 export function stabilizeCoachingEvaluation(
   currentEval: MudraEvaluationResult,
   currentKinematics: HandKinematics | null | undefined,
   anchorState: CoachingAnchorState | null,
   nowMs: number,
-  minDwellMs = 250
+  minDwellMs = 1000
 ): { stabilizedEval: MudraEvaluationResult; nextAnchor: CoachingAnchorState | null } {
   if (!currentKinematics || currentEval.measurementStatus === 'MEASUREMENT_UNAVAILABLE') {
     return { stabilizedEval: currentEval, nextAnchor: null };
@@ -206,7 +258,9 @@ export function stabilizeCoachingEvaluation(
   // Check whether the current frame strictly satisfies mandatory entry pass criteria without any hysteresis
   const rawContactFailed = currentEval.jointEvaluations.some(
     (e) =>
-      (e.unit === 'palmRatio' || e.jointKey.startsWith('contact.')) &&
+      (e.unit === 'palmRatio' ||
+        e.jointKey.startsWith('contact.') ||
+        e.jointKey.startsWith('thumbPlacement.')) &&
       (e.status !== 'CORRECT' || getNormalizedJointError(e) > 1.0)
   );
   const rawSevereDiscrepancy = currentEval.jointEvaluations.some((e) => e.status === 'INCORRECT');
@@ -266,7 +320,11 @@ export function stabilizeCoachingEvaluation(
 
   // 2. Derive coherent pass/fail (`isMastered`), `isValidHoldFrame`, and `isFlawless` states
   const contactFailed = stabilizedJointEvaluations.some(
-    (e) => (e.unit === 'palmRatio' || e.jointKey.startsWith('contact.')) && e.status !== 'CORRECT'
+    (e) =>
+      (e.unit === 'palmRatio' ||
+        e.jointKey.startsWith('contact.') ||
+        e.jointKey.startsWith('thumbPlacement.')) &&
+      e.status !== 'CORRECT'
   );
   const hasSevereDiscrepancy = stabilizedJointEvaluations.some((e) => e.status === 'INCORRECT');
   const hasMinorDiscrepancy = stabilizedJointEvaluations.some(
@@ -301,22 +359,31 @@ export function stabilizeCoachingEvaluation(
   const createAnchor = (
     evalRes: MudraEvaluationResult,
     updatedAt = nowMs
-  ): CoachingAnchorState => ({
-    mudraId: evalRes.mudraId,
-    handedness: evalRes.handedness,
-    anchorVector: currentVector,
-    primaryDirective: evalRes.primaryDirective,
-    secondaryDirective: evalRes.secondaryDirective,
-    primaryJointKey: evalRes.primaryJointKey,
-    secondaryJointKey: evalRes.secondaryJointKey,
-    wasMastered: evalRes.isMastered,
-    wasValidHoldFrame: evalRes.isValidHoldFrame,
-    wasFlawless: evalRes.isFlawless,
-    hysteresisElapsedMs: evalRes.isMastered ? nextHysteresisElapsedMs : 0,
-    lastFrameAtMs: nowMs,
-    jointStatuses: nextJointStatuses,
-    updatedAtMs: updatedAt,
-  });
+  ): CoachingAnchorState => {
+    const primaryEval = evalRes.jointEvaluations.find(
+      (j) => j.jointKey === evalRes.primaryJointKey
+    );
+    const primaryDirectionSign = primaryEval ? Math.sign(primaryEval.deltaDegrees) : undefined;
+
+    return {
+      mudraId: evalRes.mudraId,
+      handedness: evalRes.handedness,
+      anchorVector: currentVector,
+      primaryDirective: evalRes.primaryDirective,
+      secondaryDirective: evalRes.secondaryDirective,
+      primaryJointKey: evalRes.primaryJointKey,
+      secondaryJointKey: evalRes.secondaryJointKey,
+      primaryDirectionSign,
+      wasMastered: evalRes.isMastered,
+      wasValidHoldFrame: evalRes.isValidHoldFrame,
+      wasFlawless: evalRes.isFlawless,
+      wasPoseStatus: evalRes.poseStatus,
+      hysteresisElapsedMs: evalRes.isMastered ? nextHysteresisElapsedMs : 0,
+      lastFrameAtMs: nowMs,
+      jointStatuses: nextJointStatuses,
+      updatedAtMs: updatedAt,
+    };
+  };
 
   // 3. Handle mastered state:
   //    - `isFlawless === true`: all evaluated target criteria are strictly satisfied -> "Within target ranges..."
@@ -329,6 +396,7 @@ export function stabilizeCoachingEvaluation(
         isMastered: true,
         isValidHoldFrame,
         isFlawless: true,
+        poseStatus: 'ALL_CRITERIA_WITHIN_RANGE',
         primaryDirective: WITHIN_TARGET_RANGES_DIRECTIVE,
         secondaryDirective: undefined,
         primaryJointKey: undefined,
@@ -346,29 +414,24 @@ export function stabilizeCoachingEvaluation(
     const rawDeviating = currentEval.jointEvaluations
       .filter((e) => e.status !== 'CORRECT' || getNormalizedJointError(e) > 1.0)
       .sort((a, b) => (b.weightedPenalty ?? 0) - (a.weightedPenalty ?? 0));
-    const topMinor: JointEvaluation | undefined =
-      stabilizedJointEvaluations.find(
+    const deviatingStabilized = stabilizedJointEvaluations
+      .filter(
         (e) =>
-          e.status === 'MINOR_DEVIATION' &&
+          e.status !== 'CORRECT' &&
           e.unit !== 'palmRatio' &&
           !e.jointKey.startsWith('contact.')
-      ) ?? rawDeviating[0];
+      )
+      .sort((a, b) => (b.weightedPenalty ?? 0) - (a.weightedPenalty ?? 0));
+    const topMinor: JointEvaluation | undefined = deviatingStabilized[0] ?? rawDeviating[0];
 
     let minorDirective = currentEval.primaryDirective;
     let minorJointKey: string | undefined = currentEval.primaryJointKey ?? topMinor?.jointKey;
 
-    const stripRefinementPrefix = (text: string): string =>
-      text.replace(
-        /^(?:(?:Good Form — hold steady!|Good Form \(boundary grace, hold paused\) —) Optional refinement \((?:[^()]|\([^()]*\))*?\):\s*)+/,
-        ''
-      );
-
     if (topMinor) {
-      const cleanedCurrent = stripRefinementPrefix(currentEval.primaryDirective);
-      const baseRuleText =
-        cleanedCurrent === WITHIN_TARGET_RANGES_DIRECTIVE
-          ? formatFallbackDirective(topMinor)
-          : cleanedCurrent;
+      const targetMudra = CANONICAL_MUDRAS[currentEval.mudraId];
+      const baseRuleText = targetMudra
+        ? resolveJointDirective(targetMudra, topMinor)
+        : formatFallbackDirective(topMinor);
       minorDirective = isValidHoldFrame
         ? `Good Form — hold steady! Optional refinement (${topMinor.label}): ${baseRuleText}`
         : `Good Form (boundary grace, hold paused) — Optional refinement (${topMinor.label}): ${baseRuleText}`;
@@ -384,7 +447,6 @@ export function stabilizeCoachingEvaluation(
     if (
       wasMasteredPreviously &&
       !anchorState?.wasFlawless &&
-      anchorState?.wasValidHoldFrame === isValidHoldFrame &&
       anchorState?.primaryDirective &&
       areKinematicsVectorsSimilar(currentVector, anchorState.anchorVector)
     ) {
@@ -397,6 +459,9 @@ export function stabilizeCoachingEvaluation(
       isMastered: true,
       isValidHoldFrame,
       isFlawless: false,
+      poseStatus: isValidHoldFrame
+        ? 'PASSING_WITH_PERMITTED_DEVIATIONS'
+        : 'BOUNDARY_GRACE_PAUSED',
       primaryDirective: minorDirective,
       secondaryDirective: undefined,
       primaryJointKey: minorJointKey,
@@ -419,6 +484,7 @@ export function stabilizeCoachingEvaluation(
     isMastered: false,
     isValidHoldFrame: false,
     isFlawless: false,
+    poseStatus: 'ACTIONABLE_ADJUSTMENT',
     jointEvaluations: stabilizedJointEvaluations,
   };
 
@@ -446,64 +512,110 @@ export function stabilizeCoachingEvaluation(
     };
   }
 
-  const isSamePrimaryJoint =
-    Boolean(anchorState.primaryJointKey) &&
-    baseNonMasteredEval.primaryJointKey === anchorState.primaryJointKey;
+  // Check if the user changed/inverted correction direction on the coached feature (e.g. TOO_BENT -> TOO_STRAIGHT)
+  const prevDirectionSign = anchorState.primaryDirectionSign ?? 0;
+  const currentDirectionSign = lockedJointEval ? Math.sign(lockedJointEval.deltaDegrees) : 0;
+  const isDirectionInverted =
+    prevDirectionSign !== 0 &&
+    currentDirectionSign !== 0 &&
+    prevDirectionSign !== currentDirectionSign;
 
-  // Check whether a new primary error is severe, a signature joint, or a broken contact
-  const newPrimaryEval = baseNonMasteredEval.primaryJointKey
-    ? stabilizedJointEvaluations.find((j) => j.jointKey === baseNonMasteredEval.primaryJointKey)
-    : undefined;
-  const isUrgentNewPrimary =
-    !isSamePrimaryJoint &&
-    Boolean(
-      newPrimaryEval &&
-        (newPrimaryEval.status === 'INCORRECT' ||
-          (newPrimaryEval.weight ?? 1.0) >= 2.0 ||
-          newPrimaryEval.unit === 'palmRatio' ||
-          newPrimaryEval.jointKey.startsWith('contact.'))
-    );
-
-  if (isUrgentNewPrimary) {
+  if (isDirectionInverted) {
     return {
       stabilizedEval: baseNonMasteredEval,
       nextAnchor: createAnchor(baseNonMasteredEval),
     };
   }
 
-  // Gate 1: Anchor-Vector Similarity Gate — if the hand pose hasn't meaningfully changed
-  // from when the advice was issued, keep the coaching text steady.
-  if (areKinematicsVectorsSimilar(currentVector, anchorState.anchorVector)) {
+  const isSamePrimaryJoint =
+    Boolean(anchorState.primaryJointKey) &&
+    baseNonMasteredEval.primaryJointKey === anchorState.primaryJointKey;
+
+  const newPrimaryEval = baseNonMasteredEval.primaryJointKey
+    ? stabilizedJointEvaluations.find((j) => j.jointKey === baseNonMasteredEval.primaryJointKey)
+    : undefined;
+
+  // Determine if the new primary error represents a genuine priority escalation over the currently coached joint:
+  const isLockedContact =
+    lockedJointEval?.unit === 'palmRatio' ||
+    Boolean(lockedJointEval?.jointKey.startsWith('contact.')) ||
+    Boolean(lockedJointEval?.jointKey.startsWith('thumbPlacement.'));
+  const isNewContact =
+    newPrimaryEval?.unit === 'palmRatio' ||
+    Boolean(newPrimaryEval?.jointKey.startsWith('contact.')) ||
+    Boolean(newPrimaryEval?.jointKey.startsWith('thumbPlacement.'));
+
+  // 1. Contact break escalation: user broke a defining touch while the locked joint was not a contact failure
+  const isContactEscalation = !isLockedContact && isNewContact;
+
+  // 2. Severity tier escalation: new error is INCORRECT while locked joint was only MINOR_DEVIATION
+  const isSeverityEscalation =
+    lockedJointEval?.status === 'MINOR_DEVIATION' &&
+    newPrimaryEval?.status === 'INCORRECT';
+
+  // 3. Signature escalation: new error is an INCORRECT signature joint (weight >= 2.0) while locked joint was non-signature
+  const isSignatureEscalation =
+    (lockedJointEval?.weight ?? 1.0) < 2.0 &&
+    (newPrimaryEval?.weight ?? 1.0) >= 2.0 &&
+    newPrimaryEval?.status === 'INCORRECT';
+
+  // 4. Substantial penalty surge: new error penalty exceeds locked penalty by a large margin (>= 40% higher + 1.0)
+  const lockedPenalty = lockedJointEval?.weightedPenalty ?? 0;
+  const newPenalty = newPrimaryEval?.weightedPenalty ?? 0;
+  const isPenaltySurge = newPenalty > lockedPenalty * 1.4 + 1.0;
+
+  const isUrgentEscalation =
+    !isSamePrimaryJoint &&
+    (isContactEscalation || isSeverityEscalation || isSignatureEscalation || isPenaltySurge);
+
+  if (isUrgentEscalation) {
     return {
-      stabilizedEval: {
-        ...baseNonMasteredEval,
-        primaryDirective: anchorState.primaryDirective,
-        secondaryDirective: anchorState.secondaryDirective,
-        primaryJointKey: anchorState.primaryJointKey,
-        secondaryJointKey: anchorState.secondaryJointKey,
-      },
-      nextAnchor: {
-        ...anchorState,
-        hysteresisElapsedMs: 0,
-        lastFrameAtMs: nowMs,
-        jointStatuses: nextJointStatuses,
-      },
+      stabilizedEval: baseNonMasteredEval,
+      nextAnchor: createAnchor(baseNonMasteredEval),
     };
   }
 
-  // Gate 2: Same-joint mid-motion continuity or brief cross-joint tie debounce (default 250ms)
-  const withinDwellWindow = nowMs - anchorState.updatedAtMs < minDwellMs;
-  if (isSamePrimaryJoint || withinDwellWindow) {
+  // Dwell Window & Similarity Gate: maintain steady guidance on the current primary joint so the
+  // user has sufficient time to read and react, eliminating rapid instruction alternation between competing errors.
+  const timeSinceAnchor = nowMs - anchorState.updatedAtMs;
+  const withinDwellWindow = timeSinceAnchor < minDwellMs;
+  const isVectorSimilar = areKinematicsVectorsSimilar(currentVector, anchorState.anchorVector);
+
+  if (isSamePrimaryJoint || withinDwellWindow || isVectorSimilar) {
+    let secondaryDir = anchorState.secondaryDirective;
+    let secondaryKey = anchorState.secondaryJointKey;
+
+    const isPrevSecResolved =
+      !secondaryKey ||
+      stabilizedJointEvaluations.some(
+        (j) => j.jointKey === secondaryKey && j.status === 'CORRECT'
+      );
+
+    if (isPrevSecResolved || !secondaryDir) {
+      const currentSecKey =
+        baseNonMasteredEval.primaryJointKey !== anchorState.primaryJointKey
+          ? baseNonMasteredEval.primaryJointKey
+          : baseNonMasteredEval.secondaryJointKey;
+      const currentSecDirective =
+        baseNonMasteredEval.primaryJointKey !== anchorState.primaryJointKey
+          ? baseNonMasteredEval.primaryDirective
+          : baseNonMasteredEval.secondaryDirective;
+      secondaryKey = currentSecKey;
+      secondaryDir = currentSecDirective;
+    }
+
     return {
       stabilizedEval: {
         ...baseNonMasteredEval,
         primaryDirective: anchorState.primaryDirective,
-        secondaryDirective: anchorState.secondaryDirective,
+        secondaryDirective: secondaryDir,
         primaryJointKey: anchorState.primaryJointKey,
-        secondaryJointKey: anchorState.secondaryJointKey,
+        secondaryJointKey: secondaryKey,
       },
       nextAnchor: {
         ...anchorState,
+        secondaryDirective: secondaryDir,
+        secondaryJointKey: secondaryKey,
         anchorVector: withinDwellWindow ? anchorState.anchorVector : currentVector,
         hysteresisElapsedMs: 0,
         lastFrameAtMs: nowMs,
@@ -692,6 +804,7 @@ export function evaluateMudraKinematics(
       mudraId: targetMudra.id,
       mudraName: targetMudra.name,
       measurementStatus: 'MEASUREMENT_UNAVAILABLE',
+      poseStatus: 'MEASUREMENT_UNAVAILABLE',
       coordinateSource: 'unavailable',
       handedness: 'Unknown',
       matchScore: 0,
@@ -870,6 +983,120 @@ export function evaluateMudraKinematics(
     });
   }
 
+  // Evaluate gesture-configured palm-relative thumb placement requirements
+  let thumbPlacementFailed = false;
+  let topThumbPlacementDirective = '';
+  let topThumbPlacementJointKey: string | undefined;
+
+  if (targetMudra.thumbPlacementRequirements && targetMudra.thumbPlacementRequirements.length > 0) {
+    targetMudra.thumbPlacementRequirements.forEach((req) => {
+      const jointKey = `thumbPlacement.${req.feature}`;
+      const actualVal = kinematics.thumbPlacement ? kinematics.thumbPlacement[req.feature] : undefined;
+      const tol = req.tolerancePalmRatio > 0 ? req.tolerancePalmRatio : 0.2;
+
+      // Handle missing, NaN, or non-finite measurements: cannot pass mandatory requirements
+      if (typeof actualVal !== 'number' || !Number.isFinite(actualVal)) {
+        const weightedPenalty = req.weight * 9.0;
+        totalWeightedPenalty += weightedPenalty;
+        totalWeight += req.weight;
+
+        if (req.isMandatoryGate) {
+          thumbPlacementFailed = true;
+          if (!topThumbPlacementDirective) {
+            topThumbPlacementDirective = formatFallbackThumbPlacementDirective(req, actualVal);
+            topThumbPlacementJointKey = jointKey;
+          }
+        }
+
+        evaluations.push({
+          jointKey,
+          label: req.label,
+          unit: 'palmRatio',
+          rawValue: undefined,
+          currentDegrees: 0,
+          targetDegrees: Number(req.targetPalmRatio.toFixed(2)),
+          toleranceDegrees: Number(tol.toFixed(2)),
+          acceptedRange: [
+            Number((req.minAllowedPalmRatio ?? req.targetPalmRatio - tol).toFixed(2)),
+            Number((req.maxAllowedPalmRatio ?? req.targetPalmRatio + tol).toFixed(2)),
+          ],
+          deltaDegrees: 0,
+          normalizedError: 9.99,
+          weight: req.weight,
+          weightedPenalty: Number(weightedPenalty.toFixed(3)),
+          status: 'INCORRECT',
+        });
+        return;
+      }
+
+      const delta = actualVal - req.targetPalmRatio;
+      const absDelta = Math.abs(delta);
+      let normalizedError = absDelta / tol;
+
+      const exceedsMax = req.maxAllowedPalmRatio !== undefined && actualVal > req.maxAllowedPalmRatio;
+      const belowMin = req.minAllowedPalmRatio !== undefined && actualVal < req.minAllowedPalmRatio;
+
+      if (exceedsMax) {
+        normalizedError = Math.max(
+          normalizedError,
+          1.0 + (actualVal - req.maxAllowedPalmRatio!) / 0.1
+        );
+      }
+      if (belowMin) {
+        normalizedError = Math.max(
+          normalizedError,
+          1.0 + (req.minAllowedPalmRatio! - actualVal) / 0.1
+        );
+      }
+
+      let status: JointEvaluation['status'] = 'CORRECT';
+      if (normalizedError > 1.8) {
+        status = 'INCORRECT';
+      } else if (normalizedError > 1.0 || exceedsMax || belowMin) {
+        status = 'MINOR_DEVIATION';
+      }
+
+      let ratio = 0;
+      if (normalizedError > 1.0) {
+        const excess = normalizedError - 1.0;
+        ratio = 0.35 + excess * 1.45;
+      } else {
+        ratio = normalizedError * 0.35;
+      }
+
+      const weightedPenalty = req.weight * Math.min(ratio * ratio, 9.0);
+      totalWeightedPenalty += weightedPenalty;
+      totalWeight += req.weight;
+
+      if ((status !== 'CORRECT' || exceedsMax || belowMin) && req.isMandatoryGate) {
+        thumbPlacementFailed = true;
+        if (!topThumbPlacementDirective) {
+          topThumbPlacementDirective = formatFallbackThumbPlacementDirective(req, actualVal);
+          topThumbPlacementJointKey = jointKey;
+        }
+      }
+
+      evaluations.push({
+        jointKey,
+        label: req.label,
+        unit: 'palmRatio',
+        rawValue: Number(actualVal.toFixed(3)),
+        currentDegrees: Number(actualVal.toFixed(2)),
+        targetDegrees: Number(req.targetPalmRatio.toFixed(2)),
+        toleranceDegrees: Number(tol.toFixed(2)),
+        acceptedRange: [
+          Number((req.minAllowedPalmRatio ?? req.targetPalmRatio - tol).toFixed(2)),
+          Number((req.maxAllowedPalmRatio ?? req.targetPalmRatio + tol).toFixed(2)),
+        ],
+        deltaDegrees: Number(delta.toFixed(2)),
+        normalizedError: Number(normalizedError.toFixed(3)),
+        weight: req.weight,
+        weightedPenalty: Number(weightedPenalty.toFixed(3)),
+        status,
+      });
+    });
+  }
+
   // Calculate exponential decaying score
   const avgPenalty = totalWeight > 0 ? totalWeightedPenalty / totalWeight : 0;
   const rawScore = Math.exp(-0.5 * avgPenalty) * 100;
@@ -879,7 +1106,12 @@ export function evaluateMudraKinematics(
   // to pass on entry. Beyond 1.0x tolerance, apply a smooth progressive score ceiling starting at 88%.
   let hasSignatureDiscrepancy = false;
   evaluations.forEach((e) => {
-    if (e.unit !== 'palmRatio' && !e.jointKey.startsWith('contact.') && (e.weight ?? 1.0) >= 2.0) {
+    if (
+      e.unit !== 'palmRatio' &&
+      !e.jointKey.startsWith('contact.') &&
+      !e.jointKey.startsWith('thumbPlacement.') &&
+      (e.weight ?? 1.0) >= 2.0
+    ) {
       const sigRatio = getNormalizedJointError(e);
       if (sigRatio > 1.0) {
         hasSignatureDiscrepancy = true;
@@ -893,12 +1125,20 @@ export function evaluateMudraKinematics(
   if (contactFailed) {
     matchScore = Math.min(matchScore, 65);
   }
+  // If mandatory palm-relative thumb placement is failed, cap below mastery threshold (max 65%)
+  if (thumbPlacementFailed) {
+    matchScore = Math.min(matchScore, 65);
+  }
 
-  // Identify top angular discrepancies to form pedagogical advice (excluding contact entries),
+  // Identify top angular discrepancies to form pedagogical advice (excluding contact and thumbPlacement entries),
   // prioritizing weighted penalty (signature joints first) with normalizedError as tiebreaker.
   const incorrectJoints = evaluations
     .filter(
-      (e) => e.status !== 'CORRECT' && e.unit !== 'palmRatio' && !e.jointKey.startsWith('contact.')
+      (e) =>
+        e.status !== 'CORRECT' &&
+        e.unit !== 'palmRatio' &&
+        !e.jointKey.startsWith('contact.') &&
+        !e.jointKey.startsWith('thumbPlacement.')
     )
     .sort((a, b) => {
       const penaltyDiff = (b.weightedPenalty ?? 0) - (a.weightedPenalty ?? 0);
@@ -936,6 +1176,19 @@ export function evaluateMudraKinematics(
     primaryJointKey = topContactJointKey;
   }
 
+  // If mandatory thumb placement failed, prioritize that guidance!
+  if (thumbPlacementFailed && topThumbPlacementDirective) {
+    if (primaryDirective !== topThumbPlacementDirective && primaryJointKey) {
+      secondaryDirective = primaryDirective;
+      secondaryJointKey = primaryJointKey;
+    } else {
+      secondaryDirective = undefined;
+      secondaryJointKey = undefined;
+    }
+    primaryDirective = topThumbPlacementDirective;
+    primaryJointKey = topThumbPlacementJointKey;
+  }
+
   // Mandatory Pass Criteria vs. Continuous Scoring Weights:
   // - Signature joints (weight >= 2.0) and requiredContacts are mandatory in-range criteria (normalizedError <= 1.0 on entry).
   // - Non-signature features (weight < 2.0) contribute to matchScore via continuous weights and may have MINOR_DEVIATION
@@ -948,6 +1201,7 @@ export function evaluateMudraKinematics(
   const isMastered =
     matchScore >= PASS_ENTRY_SCORE &&
     !contactFailed &&
+    !thumbPlacementFailed &&
     !hasSevereDiscrepancy &&
     !hasSignatureDiscrepancy;
   const isValidHoldFrame = isMastered;
@@ -973,10 +1227,20 @@ export function evaluateMudraKinematics(
     secondaryJointKey = undefined;
   }
 
+  let poseStatus: MudraPoseStatus = 'ACTIONABLE_ADJUSTMENT';
+  if (isFlawless) {
+    poseStatus = 'ALL_CRITERIA_WITHIN_RANGE';
+  } else if (isMastered) {
+    poseStatus = isValidHoldFrame ? 'PASSING_WITH_PERMITTED_DEVIATIONS' : 'BOUNDARY_GRACE_PAUSED';
+  } else {
+    poseStatus = 'ACTIONABLE_ADJUSTMENT';
+  }
+
   return {
     mudraId: targetMudra.id,
     mudraName: targetMudra.name,
     measurementStatus: 'VALID',
+    poseStatus,
     coordinateSource: kinematics.coordinateSource,
     handedness: kinematics.handedness,
     matchScore,

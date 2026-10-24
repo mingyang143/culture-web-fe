@@ -56,6 +56,7 @@ import {
 import { handLandmarkerService, HAND_CONNECTIONS } from 'services/handLandmarkerService';
 import {
   MudraEvaluationResult,
+  MudraPoseStatus,
   Landmark3D,
   JointEvaluation,
   CanonicalMudra,
@@ -103,12 +104,11 @@ const SAMPLE_IMAGE_URLS = [
 ];
 
 const getScoreStatus = (
-  result: MudraEvaluationResult | null,
-  isHoldMastered: boolean
+  result: MudraEvaluationResult | null
 ): 'success' | 'normal' | 'exception' => {
-  if (result?.measurementStatus === 'MEASUREMENT_UNAVAILABLE') return 'exception';
-  if (isHoldMastered || result?.isMastered) return 'success';
-  if ((result?.matchScore || 0) > 60) return 'normal';
+  if (!result || result.measurementStatus === 'MEASUREMENT_UNAVAILABLE') return 'exception';
+  if (result.isMastered && (result.isValidHoldFrame ?? true)) return 'success';
+  if ((result.matchScore || 0) > 60) return 'normal';
   return 'exception';
 };
 
@@ -456,6 +456,59 @@ const MudraPracticePage: React.FC = () => {
         });
       }
 
+      // Draw dashed spatial guide and placement indicator for thumb placement requirements if failing
+      if (evalRes && !isUnavailable) {
+        const placementGuides: Array<{ key: string; idxA: number; idxB: number }> = [
+          { key: 'thumbPlacement.radialGapFromIndexMcp', idxA: 4, idxB: 5 },
+          { key: 'thumbPlacement.ipRadialGapFromIndexMcp', idxA: 3, idxB: 5 },
+          { key: 'thumbPlacement.tipToIndexMcp', idxA: 4, idxB: 5 },
+          { key: 'thumbPlacement.tipToMiddleMcp', idxA: 4, idxB: 9 },
+          { key: 'thumbPlacement.palmar', idxA: 4, idxB: 0 },
+        ];
+
+        // Deduplicate pairs to avoid overdrawing and select highest severity
+        const activePlacementPairs: Map<
+          string,
+          { idxA: number; idxB: number; status: 'MINOR_DEVIATION' | 'INCORRECT' }
+        > = new Map();
+        placementGuides.forEach(({ key, idxA, idxB }) => {
+          const placementEval = evalRes.jointEvaluations.find((je) => je.jointKey === key);
+          if (placementEval && placementEval.status !== 'CORRECT') {
+            const pairKey = `${idxA}-${idxB}`;
+            const existing = activePlacementPairs.get(pairKey);
+            if (
+              !existing ||
+              (existing.status === 'MINOR_DEVIATION' && placementEval.status === 'INCORRECT')
+            ) {
+              activePlacementPairs.set(pairKey, { idxA, idxB, status: placementEval.status });
+            }
+          }
+        });
+
+        activePlacementPairs.forEach(({ idxA, idxB, status }) => {
+          const pA = landmarks[idxA];
+          const pB = landmarks[idxB];
+          if (pA && pB) {
+            ctx.save();
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = status === 'INCORRECT' ? '#EF4444' : '#F59E0B';
+            ctx.beginPath();
+            ctx.moveTo(pA.x * width, pA.y * height);
+            ctx.lineTo(pB.x * width, pB.y * height);
+            ctx.stroke();
+
+            // Draw distinct placement target halo around the thumb landmark to indicate spatial placement deviation
+            // without falsely changing the joint flexion bone colors between 1-2, 2-3, 3-4
+            ctx.beginPath();
+            ctx.arc(pA.x * width, pA.y * height, 11, 0, 2 * Math.PI);
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+      }
+
       // Draw landmark nodes
       landmarks.forEach((p, idx) => {
         const x = p.x * width;
@@ -662,7 +715,8 @@ const MudraPracticePage: React.FC = () => {
             rawEvalRes,
             kinematics,
             coachingAnchorRef.current,
-            now
+            now,
+            1000
           );
           coachingAnchorRef.current = nextAnchor;
           setEvaluationResult(evalRes);
@@ -961,36 +1015,54 @@ const MudraPracticePage: React.FC = () => {
   const isMeasurementUnavailable =
     evaluationResult?.measurementStatus === 'MEASUREMENT_UNAVAILABLE';
 
-  let coachAlertMessage = 'Actionable Adjustment';
-  if (isMeasurementUnavailable) {
-    coachAlertMessage = 'Measurement Unavailable (3D World Landmarks Missing)';
-  } else if (isHoldMastered) {
-    coachAlertMessage = evaluationResult?.isFlawless
-      ? 'Within target ranges — 2.0s hold complete.'
-      : 'Good Form — 2.0s hold complete (optional refinement available).';
-  } else if (evaluationResult?.isFlawless) {
-    coachAlertMessage = 'Within target ranges — accumulate 2.0s of valid pose time...';
-  } else if (evaluationResult?.isMastered) {
-    coachAlertMessage =
-      evaluationResult.isValidHoldFrame === false
-        ? 'Hold paused (boundary grace) — refine highlighted joint to resume hold'
-        : 'Good Form (with optional refinement) — accumulate 2.0s of valid pose time...';
-  }
-
-  let coachAlertIcon = <BulbOutlined />;
-  if (isHoldMastered) {
-    coachAlertIcon = <TrophyOutlined />;
-  } else if (evaluationResult?.isMastered) {
-    coachAlertIcon = <CheckCircleOutlined />;
+  let poseStatus: MudraPoseStatus = 'ACTIONABLE_ADJUSTMENT';
+  if (evaluationResult?.poseStatus) {
+    poseStatus = evaluationResult.poseStatus;
   } else if (isMeasurementUnavailable) {
-    coachAlertIcon = <ExclamationCircleOutlined />;
+    poseStatus = 'MEASUREMENT_UNAVAILABLE';
+  } else if (evaluationResult?.isFlawless) {
+    poseStatus = 'ALL_CRITERIA_WITHIN_RANGE';
+  } else if (evaluationResult?.isMastered) {
+    poseStatus =
+      evaluationResult.isValidHoldFrame === false
+        ? 'BOUNDARY_GRACE_PAUSED'
+        : 'PASSING_WITH_PERMITTED_DEVIATIONS';
   }
 
-  let coachAlertType: 'success' | 'warning' | 'error' = 'warning';
+  let coachAlertMessage = 'Actionable Adjustment';
+  let coachAlertIcon = <BulbOutlined />;
+  let coachAlertType: 'success' | 'warning' | 'error' | 'info' = 'warning';
+
   if (isMeasurementUnavailable) {
+    coachAlertMessage = isHoldMastered
+      ? 'Measurement Unavailable — 2.0s hold verified'
+      : 'Measurement Unavailable (3D Landmarks Missing)';
+    coachAlertIcon = <ExclamationCircleOutlined />;
     coachAlertType = 'error';
-  } else if (isHoldMastered || evaluationResult?.isMastered) {
+  } else if (poseStatus === 'ALL_CRITERIA_WITHIN_RANGE') {
+    coachAlertMessage = isHoldMastered
+      ? 'All criteria within target ranges — 2.0s hold verified!'
+      : 'All criteria within target ranges — hold steady';
+    coachAlertIcon = isHoldMastered ? <TrophyOutlined /> : <CheckCircleOutlined />;
     coachAlertType = 'success';
+  } else if (poseStatus === 'PASSING_WITH_PERMITTED_DEVIATIONS') {
+    coachAlertMessage = isHoldMastered
+      ? 'Passing with permitted deviations — 2.0s hold verified!'
+      : 'Passing with permitted deviations — hold steady';
+    coachAlertIcon = isHoldMastered ? <TrophyOutlined /> : <CheckCircleOutlined />;
+    coachAlertType = 'info';
+  } else if (poseStatus === 'BOUNDARY_GRACE_PAUSED') {
+    coachAlertMessage = isHoldMastered
+      ? 'Boundary grace (hold paused) — 2.0s hold verified'
+      : 'Boundary grace (hold paused) — refine posture to resume';
+    coachAlertIcon = <ExclamationCircleOutlined />;
+    coachAlertType = 'warning';
+  } else {
+    coachAlertMessage = isHoldMastered
+      ? 'Actionable Adjustment (2.0s hold previously verified)'
+      : 'Actionable Adjustment';
+    coachAlertIcon = <BulbOutlined />;
+    coachAlertType = 'warning';
   }
 
   let holdProgressStatus: 'success' | 'active' | 'normal' = 'normal';
@@ -1475,7 +1547,7 @@ const MudraPracticePage: React.FC = () => {
               <Progress
                 type="circle"
                 percent={isMeasurementUnavailable ? 0 : evaluationResult?.matchScore || 0}
-                status={getScoreStatus(evaluationResult, isHoldMastered)}
+                status={getScoreStatus(evaluationResult)}
                 format={(percent) => (isMeasurementUnavailable ? 'N/A' : `${percent}%`)}
               />
 
@@ -1552,7 +1624,6 @@ const MudraPracticePage: React.FC = () => {
               }}
             >
               {evaluationResult?.secondaryDirective &&
-              !isHoldMastered &&
               !isMeasurementUnavailable ? (
                 <Paragraph type="secondary" style={{ marginBottom: 0 }}>
                   <ExclamationCircleOutlined /> Secondary Tip: {evaluationResult.secondaryDirective}

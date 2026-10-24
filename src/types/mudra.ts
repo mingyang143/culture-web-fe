@@ -187,10 +187,18 @@ export interface JointEvaluation {
   status: 'CORRECT' | 'MINOR_DEVIATION' | 'INCORRECT';
 }
 
+export type MudraPoseStatus =
+  | 'MEASUREMENT_UNAVAILABLE'
+  | 'ALL_CRITERIA_WITHIN_RANGE'
+  | 'PASSING_WITH_PERMITTED_DEVIATIONS'
+  | 'BOUNDARY_GRACE_PAUSED'
+  | 'ACTIONABLE_ADJUSTMENT';
+
 export interface MudraEvaluationResult {
   mudraId: string;
   mudraName: string;
   measurementStatus?: 'VALID' | 'MEASUREMENT_UNAVAILABLE';
+  poseStatus?: MudraPoseStatus;
   coordinateSource?: CoordinateSource;
   handedness?: HandednessType;
   matchScore: number; // 0 to 100
@@ -214,9 +222,11 @@ export interface CoachingAnchorState {
   secondaryDirective?: string;
   primaryJointKey?: string;
   secondaryJointKey?: string;
+  primaryDirectionSign?: number; // Signed error direction (Math.sign(deltaDegrees)) to detect overshooting/reversal
   wasMastered: boolean;
   wasValidHoldFrame?: boolean;
   wasFlawless?: boolean;
+  wasPoseStatus?: MudraPoseStatus;
   hysteresisElapsedMs?: number;
   lastFrameAtMs?: number;
   jointStatuses?: Record<string, JointEvaluation['status']>;

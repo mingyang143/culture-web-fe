@@ -278,7 +278,7 @@ export function normalizeVector(v: Landmark3D): Landmark3D {
  */
 export function calculateJointAngle(a: Landmark3D, b: Landmark3D, c: Landmark3D): number {
   if (!isFiniteLandmark(a) || !isFiniteLandmark(b) || !isFiniteLandmark(c)) {
-    return 0;
+    return NaN;
   }
 
   const v1 = createVector(a, b); // Incoming bone segment
@@ -287,7 +287,7 @@ export function calculateJointAngle(a: Landmark3D, b: Landmark3D, c: Landmark3D)
   const mag1 = vectorMagnitude(v1);
   const mag2 = vectorMagnitude(v2);
 
-  if (mag1 <= NEAR_ZERO_EPSILON || mag2 <= NEAR_ZERO_EPSILON) return 0;
+  if (mag1 <= NEAR_ZERO_EPSILON || mag2 <= NEAR_ZERO_EPSILON) return NaN;
 
   const cosTheta = dotProduct(v1, v2) / (mag1 * mag2);
   // Clamp to [-1, 1] to prevent NaN from floating point inaccuracies
@@ -301,12 +301,12 @@ export function calculateJointAngle(a: Landmark3D, b: Landmark3D, c: Landmark3D)
  * Calculates the spread (abduction) angle between two directional vectors
  */
 export function calculateSpreadAngle(v1: Landmark3D, v2: Landmark3D): number {
-  if (!isFiniteLandmark(v1) || !isFiniteLandmark(v2)) return 0;
+  if (!isFiniteLandmark(v1) || !isFiniteLandmark(v2)) return NaN;
 
   const mag1 = vectorMagnitude(v1);
   const mag2 = vectorMagnitude(v2);
 
-  if (mag1 <= NEAR_ZERO_EPSILON || mag2 <= NEAR_ZERO_EPSILON) return 0;
+  if (mag1 <= NEAR_ZERO_EPSILON || mag2 <= NEAR_ZERO_EPSILON) return NaN;
 
   const cosTheta = dotProduct(v1, v2) / (mag1 * mag2);
   const clampedCos = Math.max(-1, Math.min(1, cosTheta));
@@ -435,6 +435,30 @@ export function extractHandKinematics(
     ring: euclideanDistance3D(norm[16], norm[13]),
     pinky: euclideanDistance3D(norm[20], norm[17]),
   };
+
+  const allAngles = [
+    thumbMcpAngle,
+    thumbPipAngle,
+    indexMcpAngle,
+    indexPipAngle,
+    indexDipAngle,
+    middleMcpAngle,
+    middlePipAngle,
+    middleDipAngle,
+    ringMcpAngle,
+    ringPipAngle,
+    ringDipAngle,
+    pinkyMcpAngle,
+    pinkyPipAngle,
+    pinkyDipAngle,
+    spreadThumbIndex,
+    spreadIndexMiddle,
+    spreadMiddleRing,
+    spreadRingPinky,
+  ];
+  if (allAngles.some((a) => !Number.isFinite(a)) || !isFiniteLandmark(palmNormal)) {
+    return null;
+  }
 
   return {
     coordinateSource: 'worldLandmarks',

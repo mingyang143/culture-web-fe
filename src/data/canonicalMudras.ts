@@ -337,6 +337,30 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       'Sacred Tilak Mark',
     ],
     referenceImageUrl: '/samples/tripataka_sample.jpg',
+    thumbPlacementRequirements: [
+      {
+        feature: 'radialGapFromIndexMcp',
+        label: 'Thumb Inward Palmar Placement',
+        targetPalmRatio: -0.1,
+        tolerancePalmRatio: 0.25,
+        maxAllowedPalmRatio: 0.15,
+        weight: 3.0,
+        isMandatoryGate: true,
+        directive:
+          'In Kathakali Thripathaka (#17), tuck your thumb inward alongside your palm face rather than abducting outward.',
+      },
+      {
+        feature: 'tipToIndexMcp',
+        label: 'Thumb Tip Proximity to Palm',
+        targetPalmRatio: 0.28,
+        tolerancePalmRatio: 0.16,
+        maxAllowedPalmRatio: 0.45,
+        weight: 2.0,
+        isMandatoryGate: true,
+        directive:
+          'Keep your thumb tip tucked closely alongside the base of your fingers on the palm.',
+      },
+    ],
     targets: {
       thumb: {
         mcp: { targetDegrees: 26, toleranceDegrees: 18, weight: 1.2 },
