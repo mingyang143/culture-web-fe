@@ -76,6 +76,114 @@ export function resolveHandedness(
   return 'Unknown';
 }
 
+export interface TrackedHandSelection {
+  handIndex: number;
+  overlayLandmarks: Landmark3D[];
+  worldLandmarks?: Landmark3D[];
+  handedness: HandednessType;
+  score: number | null;
+}
+
+export interface StickyHandSelectorOptions {
+  prevHandedness?: HandednessType;
+  prevWrist2D?: { x: number; y: number } | null;
+}
+
+/**
+ * Selects the active hand from a multi-hand MediaPipe HandLandmarkerResult with temporal stickiness.
+ * Prevents array-index flipping when two hands are simultaneously in view of the camera.
+ *
+ * Sticky Priority:
+ * 1. If only 1 hand is detected, returns it immediately.
+ * 2. If multiple hands are detected:
+ *    - Handedness continuity bonus (+2.0) if candidate matches prevHandedness ('Left' or 'Right').
+ *    - Spatial proximity bonus (+0.0 to +1.0) based on 2D wrist distance to prevWrist2D.
+ *    - Detection confidence score as baseline.
+ */
+export function selectStickyHand(
+  result: {
+    landmarks?: Array<Array<{ x: number; y: number; z?: number }>>;
+    worldLandmarks?: Landmark3D[][];
+    handedness?: Array<Array<{ categoryName?: string; displayName?: string; score?: number }>>;
+    handednesses?: Array<Array<{ categoryName?: string; displayName?: string; score?: number }>>;
+  } | null | undefined,
+  options?: StickyHandSelectorOptions
+): TrackedHandSelection | null {
+  if (!result?.landmarks || result.landmarks.length === 0) {
+    return null;
+  }
+
+  const { landmarks, worldLandmarks } = result;
+  const handednessList = result.handedness ?? result.handednesses;
+
+  if (landmarks.length === 1) {
+    const categories = handednessList?.[0];
+    const handedness = resolveHandedness(categories);
+    const rawScore = categories?.[0]?.score;
+    const overlayLandmarks: Landmark3D[] = landmarks[0].map((pt) => ({
+      x: pt.x,
+      y: pt.y,
+      z: typeof pt.z === 'number' ? pt.z : 0,
+    }));
+    return {
+      handIndex: 0,
+      overlayLandmarks,
+      worldLandmarks: worldLandmarks?.[0],
+      handedness,
+      score: typeof rawScore === 'number' ? rawScore : null,
+    };
+  }
+
+  let bestIndex = 0;
+  let bestAffinity = -Infinity;
+
+  for (let i = 0; i < landmarks.length; i += 1) {
+    const categories = handednessList?.[i];
+    const candidateHandedness = resolveHandedness(categories);
+    const candidateScore = categories?.[0]?.score ?? 0.5;
+    const wrist = landmarks[i]?.[0];
+
+    let affinity = candidateScore;
+
+    // Handedness continuity: strong bonus if matching current tracked hand
+    if (
+      options?.prevHandedness &&
+      options.prevHandedness !== 'Unknown' &&
+      candidateHandedness === options.prevHandedness
+    ) {
+      affinity += 2.0;
+    }
+
+    // Spatial proximity: bonus if wrist position in screen space is close to previous frame's wrist
+    if (options?.prevWrist2D && wrist && Number.isFinite(wrist.x) && Number.isFinite(wrist.y)) {
+      const dx = wrist.x - options.prevWrist2D.x;
+      const dy = wrist.y - options.prevWrist2D.y;
+      const dist2D = Math.sqrt(dx * dx + dy * dy);
+      affinity += Math.max(0, 1.0 - dist2D * 5.0);
+    }
+
+    if (affinity > bestAffinity) {
+      bestAffinity = affinity;
+      bestIndex = i;
+    }
+  }
+
+  const selectedCategories = handednessList?.[bestIndex];
+  const overlayLandmarks: Landmark3D[] = landmarks[bestIndex].map((pt) => ({
+    x: pt.x,
+    y: pt.y,
+    z: typeof pt.z === 'number' ? pt.z : 0,
+  }));
+
+  return {
+    handIndex: bestIndex,
+    overlayLandmarks,
+    worldLandmarks: worldLandmarks?.[bestIndex],
+    handedness: resolveHandedness(selectedCategories),
+    score: typeof selectedCategories?.[0]?.score === 'number' ? selectedCategories[0].score : null,
+  };
+}
+
 /**
  * Calculates Euclidean distance between two 3D landmarks
  */

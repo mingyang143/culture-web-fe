@@ -7,6 +7,7 @@ import {
   smoothHandKinematics,
   hasValidWorldLandmarks,
   resolveHandedness,
+  selectStickyHand,
 } from 'utils/mudraKinematics';
 import {
   evaluateMudraKinematics,
@@ -767,6 +768,70 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(holdState.holdElapsedMs).toBe(0);
     expect(holdState.hasValidAnchor).toBe(false);
     expect(holdState.handedness).toBe('Left');
+
+    // Verify selectStickyHand locks onto the active hand across multi-hand frames
+    const mockLeftHand = [{ x: 0.3, y: 0.5, z: 0 }];
+    const mockRightHand = [{ x: 0.7, y: 0.5, z: 0 }];
+
+    // Empty/missing returns null
+    expect(selectStickyHand(null)).toBeNull();
+    expect(selectStickyHand({ landmarks: [] })).toBeNull();
+
+    // 1. Single hand returns immediately
+    const singleHandResult = selectStickyHand({
+      landmarks: [mockLeftHand],
+      handedness: [[{ categoryName: 'Left', score: 0.92 }]],
+    });
+    expect(singleHandResult).not.toBeNull();
+    expect(singleHandResult?.handedness).toBe('Left');
+    expect(singleHandResult?.handIndex).toBe(0);
+
+    // 2. Multiple hands with no prior hand picks higher-confidence hand
+    const initialMultiResult = selectStickyHand({
+      landmarks: [mockRightHand, mockLeftHand],
+      handedness: [
+        [{ categoryName: 'Right', score: 0.95 }],
+        [{ categoryName: 'Left', score: 0.85 }],
+      ],
+    });
+    expect(initialMultiResult?.handIndex).toBe(0);
+    expect(initialMultiResult?.handedness).toBe('Right');
+
+    // 3. Multiple hands where student is actively practicing with 'Left':
+    // Even if Right hand has higher confidence score (0.96 vs 0.88) and appears at index 0,
+    // selectStickyHand sticks to candidate 1 ('Left')
+    const stickyLeftResult = selectStickyHand(
+      {
+        landmarks: [mockRightHand, mockLeftHand],
+        handedness: [
+          [{ categoryName: 'Right', score: 0.96 }],
+          [{ categoryName: 'Left', score: 0.88 }],
+        ],
+      },
+      {
+        prevHandedness: 'Left',
+        prevWrist2D: { x: 0.31, y: 0.51 },
+      }
+    );
+    expect(stickyLeftResult).not.toBeNull();
+    expect(stickyLeftResult?.handIndex).toBe(1);
+    expect(stickyLeftResult?.handedness).toBe('Left');
+
+    // 4. Proximity fallback: when candidate handedness is identical/unknown, closer wrist wins
+    const proximityResult = selectStickyHand(
+      {
+        landmarks: [mockRightHand, mockLeftHand],
+        handedness: [
+          [{ categoryName: 'Right', score: 0.9 }],
+          [{ categoryName: 'Right', score: 0.89 }],
+        ],
+      },
+      {
+        prevHandedness: 'Right',
+        prevWrist2D: { x: 0.69, y: 0.51 }, // close to mockRightHand (0.7, 0.5)
+      }
+    );
+    expect(proximityResult?.handIndex).toBe(0);
   });
 
   test('enforces strict target-range wording, mandatory vs non-signature criteria, and hold-time accounting', () => {

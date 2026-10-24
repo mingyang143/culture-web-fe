@@ -346,7 +346,7 @@ export function stabilizeCoachingEvaluation(
     const rawDeviating = currentEval.jointEvaluations
       .filter((e) => e.status !== 'CORRECT' || getNormalizedJointError(e) > 1.0)
       .sort((a, b) => (b.weightedPenalty ?? 0) - (a.weightedPenalty ?? 0));
-    const topMinor =
+    const topMinor: JointEvaluation | undefined =
       stabilizedJointEvaluations.find(
         (e) =>
           e.status === 'MINOR_DEVIATION' &&
@@ -355,7 +355,7 @@ export function stabilizeCoachingEvaluation(
       ) ?? rawDeviating[0];
 
     let minorDirective = currentEval.primaryDirective;
-    let minorJointKey = currentEval.primaryJointKey ?? topMinor?.jointKey;
+    let minorJointKey: string | undefined = currentEval.primaryJointKey ?? topMinor?.jointKey;
 
     const stripRefinementPrefix = (text: string): string =>
       text.replace(

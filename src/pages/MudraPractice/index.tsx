@@ -41,7 +41,7 @@ import {
 import {
   extractHandKinematics,
   smoothHandKinematics,
-  resolveHandedness,
+  selectStickyHand,
   JOINT_TRIPLETS,
 } from 'utils/mudraKinematics';
 import {
@@ -200,6 +200,7 @@ const MudraPracticePage: React.FC = () => {
   const isDetectingFrameRef = useRef<boolean>(false);
   const coachingAnchorRef = useRef<CoachingAnchorState | null>(null);
   const smoothedKinematicsRef = useRef<HandKinematics | null>(null);
+  const lastWristPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -215,6 +216,7 @@ const MudraPracticePage: React.FC = () => {
     featureHistoryRef.current = {};
     diagnosticTraceRef.current = [];
     smoothedKinematicsRef.current = null;
+    lastWristPosRef.current = null;
     setTemporalStatsMap({});
   }, []);
 
@@ -244,6 +246,7 @@ const MudraPracticePage: React.FC = () => {
     lastFrameTimeRef.current = null;
     coachingAnchorRef.current = null;
     smoothedKinematicsRef.current = null;
+    lastWristPosRef.current = null;
     setHoldProgressMs(0);
     setIsHoldMastered(false);
   }, []);
@@ -498,19 +501,16 @@ const MudraPracticePage: React.FC = () => {
         // Draw background image
         ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
 
-        const has2DHand = Boolean(result.landmarks && result.landmarks.length > 0);
+        const trackedHand = selectStickyHand(result);
+        const has2DHand = Boolean(trackedHand);
         setIsHandDetected2D(has2DHand);
 
-        if (has2DHand) {
-          const firstOverlayLandmarks = result.landmarks[0];
-          const firstWorldLandmarks = result.worldLandmarks?.[0];
-          const handCategories = result.handedness?.[0] ?? result.handednesses?.[0];
-          const handedness = resolveHandedness(handCategories);
-          const rawScore = handCategories?.[0]?.score;
-          setHandednessScore(typeof rawScore === 'number' ? rawScore : null);
+        if (trackedHand) {
+          const { overlayLandmarks, worldLandmarks, handedness, score } = trackedHand;
+          setHandednessScore(score);
 
           // Extract kinematics strictly from 3D worldLandmarks (never fallback to 2D landmarks)
-          const kinematics = extractHandKinematics(firstWorldLandmarks, handedness);
+          const kinematics = extractHandKinematics(worldLandmarks, handedness);
           setLatestKinematics(kinematics);
 
           const evalRes = evaluateMudraKinematics(kinematics, currentMudraRef.current);
@@ -533,7 +533,7 @@ const MudraPracticePage: React.FC = () => {
           }
 
           // Render 2D overlay skeleton
-          drawSkeleton(ctx, firstOverlayLandmarks, canvas.width, canvas.height, evalRes);
+          drawSkeleton(ctx, overlayLandmarks, canvas.width, canvas.height, evalRes);
         } else {
           setLatestKinematics(null);
           setHandednessScore(null);
@@ -604,16 +604,20 @@ const MudraPracticePage: React.FC = () => {
         canvas.height = video.videoHeight || 480;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const has2DHand = Boolean(result.landmarks && result.landmarks.length > 0);
+        const trackedHand = selectStickyHand(result, {
+          prevHandedness: smoothedKinematicsRef.current?.handedness,
+          prevWrist2D: lastWristPosRef.current,
+        });
+
+        const has2DHand = Boolean(trackedHand);
         setIsHandDetected2D(has2DHand);
 
-        if (has2DHand) {
-          const firstOverlayHand = result.landmarks[0];
-          const firstWorldHand = result.worldLandmarks?.[0];
-          const handCategories = result.handedness?.[0] ?? result.handednesses?.[0];
-          const handedness = resolveHandedness(handCategories);
-          const rawScore = handCategories?.[0]?.score;
-          setHandednessScore(typeof rawScore === 'number' ? rawScore : null);
+        if (trackedHand) {
+          const { overlayLandmarks, worldLandmarks, handedness, score } = trackedHand;
+          lastWristPosRef.current = overlayLandmarks[0]
+            ? { x: overlayLandmarks[0].x, y: overlayLandmarks[0].y }
+            : null;
+          setHandednessScore(score);
 
           // Reset temporal filter and hold state if the detected hand switches (Left <-> Right)
           const prevHandedness = smoothedKinematicsRef.current?.handedness;
@@ -641,7 +645,7 @@ const MudraPracticePage: React.FC = () => {
           }
 
           // Strictly use 3D worldLandmarks for assessment; apply frame-rate-aware EMA smoothing for live video
-          const rawKinematics = extractHandKinematics(firstWorldHand, handedness);
+          const rawKinematics = extractHandKinematics(worldLandmarks, handedness);
           const kinematics = smoothHandKinematics(
             smoothedKinematicsRef.current,
             rawKinematics,
@@ -707,9 +711,10 @@ const MudraPracticePage: React.FC = () => {
             traceSample,
           ];
 
-          drawSkeleton(ctx, firstOverlayHand, canvas.width, canvas.height, evalRes);
+          drawSkeleton(ctx, overlayLandmarks, canvas.width, canvas.height, evalRes);
         } else {
-          // Tracking lost: clear stale kinematics/evaluation, frame interval anchor, and unmastered hold timer
+          // Tracking lost: clear stale kinematics/evaluation, frame interval anchor, wrist position, and unmastered hold timer
+          lastWristPosRef.current = null;
           lastFrameTimeRef.current = null;
           coachingAnchorRef.current = null;
           smoothedKinematicsRef.current = null;
