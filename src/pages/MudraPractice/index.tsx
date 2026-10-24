@@ -16,6 +16,7 @@ import {
   message,
   Flex,
   Divider,
+  Image,
 } from 'antd';
 import {
   CameraOutlined,
@@ -1284,6 +1285,73 @@ const MudraPracticePage: React.FC = () => {
                 }}
               />
 
+              {/* Top-Left Target Pose Reference Overlay for Live Webcam */}
+              {inputMode === 'webcam' && currentMudra.referenceImageUrl && (
+                <div
+                  data-testid="webcam-reference-overlay"
+                  style={{
+                    position: 'absolute',
+                    top: 12,
+                    left: 12,
+                    backgroundColor: 'rgba(17, 24, 39, 0.88)',
+                    border: '1px solid #374151',
+                    padding: '6px',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.35)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    maxWidth: '124px',
+                    backdropFilter: 'blur(4px)',
+                    zIndex: 5,
+                  }}
+                >
+                  <Flex justify="space-between" align="center">
+                    <Text style={{ color: '#9CA3AF', fontSize: '11px', fontWeight: 600 }}>
+                      Target Pose
+                    </Text>
+                    <Tag
+                      color="blue"
+                      style={{
+                        margin: 0,
+                        fontSize: '10px',
+                        lineHeight: '16px',
+                        padding: '0 4px',
+                      }}
+                    >
+                      Ref
+                    </Tag>
+                  </Flex>
+                  <Image
+                    src={currentMudra.referenceImageUrl}
+                    alt={`${currentMudra.name} Target Pose`}
+                    width={110}
+                    height={95}
+                    style={{
+                      objectFit: 'cover',
+                      borderRadius: '4px',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                    }}
+                    preview={{
+                      mask: <span style={{ fontSize: '11px' }}>Enlarge</span>,
+                    }}
+                  />
+                  <Text
+                    style={{
+                      color: '#E5E7EB',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      textAlign: 'center',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {currentMudra.name}
+                  </Text>
+                </div>
+              )}
+
               {/* Top-Right Hold Timer HUD Overlay for Video/Webcam */}
               {(inputMode === 'webcam' || inputMode === 'video') &&
                 (holdProgressMs > 0 || isHoldMastered) && (
@@ -1501,16 +1569,40 @@ const MudraPracticePage: React.FC = () => {
 
           {/* Canonical Reference & Rules Card */}
           <Card title="Traditional Canonical Criteria">
-            <Paragraph>{currentMudra.description}</Paragraph>
-            <Divider style={{ margin: '8px 0' }} />
-            <Text strong>Symbolic Interpretations:</Text>
-            <div style={{ marginTop: '6px' }}>
-              {currentMudra.symbolism.map((sym) => (
-                <Tag key={sym} color="gold" style={{ marginBottom: '4px' }}>
-                  {sym}
-                </Tag>
-              ))}
-            </div>
+            <Flex gap="1.25rem" align="flex-start" vertical={isMobile}>
+              {currentMudra.referenceImageUrl && (
+                <div style={{ flexShrink: 0, textAlign: 'center' }}>
+                  <Image
+                    src={currentMudra.referenceImageUrl}
+                    alt={`${currentMudra.name} reference posture`}
+                    width={130}
+                    style={{
+                      borderRadius: '8px',
+                      border: '1px solid #E5E7EB',
+                      objectFit: 'cover',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                    }}
+                  />
+                  <div style={{ marginTop: '4px' }}>
+                    <Text type="secondary" style={{ fontSize: '11px' }}>
+                      Authoritative Form
+                    </Text>
+                  </div>
+                </div>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Paragraph>{currentMudra.description}</Paragraph>
+                <Divider style={{ margin: '8px 0' }} />
+                <Text strong>Symbolic Interpretations:</Text>
+                <div style={{ marginTop: '6px' }}>
+                  {currentMudra.symbolism.map((sym) => (
+                    <Tag key={sym} color="gold" style={{ marginBottom: '4px' }}>
+                      {sym}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+            </Flex>
           </Card>
         </Flex>
       </Flex>
