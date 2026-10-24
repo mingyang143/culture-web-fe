@@ -609,6 +609,28 @@ const MudraPracticePage: React.FC = () => {
     [drawSkeleton, recordKinematicsSample, resetHoldTimer]
   );
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, no-underscore-dangle
+      (window as any).__detectAndEvaluateImage = async (imgSrc: string, targetMudraKey: string) => {
+        const img = document.createElement('img');
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = imgSrc;
+        });
+        const result = await handLandmarkerService.detectImage(img);
+        const trackedHand = selectStickyHand(result);
+        if (!trackedHand) return null;
+        const { worldLandmarks, handedness, score } = trackedHand;
+        const kinematics = extractHandKinematics(worldLandmarks, handedness);
+        const targetMudra = CANONICAL_MUDRAS[targetMudraKey] || currentMudraRef.current;
+        const evalRes = evaluateMudraKinematics(kinematics, targetMudra);
+        return { handedness, score, kinematics, evalRes };
+      };
+    }
+  }, []);
+
   // Re-run analysis when mudra changes, image loads, or model finishes loading
   useEffect(() => {
     if (

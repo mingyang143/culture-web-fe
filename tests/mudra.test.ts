@@ -1257,12 +1257,12 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
     expect(evalInfThumb.isMastered).toBe(false);
     expect(evalInfThumb.isValidHoldFrame).toBe(false);
 
-    // d. tipToIndexMcp exceeds configured maxAllowedPalmRatio (0.45):
+    // d. tipToIndexMcp exceeds configured maxAllowedPalmRatio (0.62):
     const poseFarTipThumb: typeof poseA = {
       ...poseA,
       thumbPlacement: {
         ...poseA.thumbPlacement!,
-        tipToIndexMcp: 0.58, // exceeds 0.45
+        tipToIndexMcp: 0.72, // exceeds calibrated 0.62 max
       },
     };
     const evalFarTipThumb = evaluateMudraKinematics(poseFarTipThumb, CANONICAL_MUDRAS.thripathaka);
@@ -1589,78 +1589,75 @@ test.describe('Mudra 3D Kinematics & Evaluator Unit Suite', () => {
       spreadRingPinky: 10,
     };
 
-    // Pose 1: User straightens thumb along with the fingers (adducted alongside index)
-    // - Joint bend angles are within tolerance: MCP 14° (target 26°±18°), IP 22° (target 38°±20°)
-    // - Thumb tip is adjacent to index MCP: tipToIndexMcp = 0.28 <= 0.45, radialGapFromIndexMcp = 0.10 <= 0.15
-    const straightThumbPose: typeof baseKinematics = {
-      ...baseKinematics,
-      ...fourFingersStraight,
-      thumb: { mcp: 14, pip: 22 },
-      thumbPlacement: {
-        ...baseKinematics.thumbPlacement!,
-        radialGapFromIndexMcp: 0.1, // within maxAllowedPalmRatio: 0.15
-        tipToIndexMcp: 0.28, // within maxAllowedPalmRatio: 0.45
-      },
-    };
-
-    const evalStraight = evaluateMudraKinematics(straightThumbPose, CANONICAL_MUDRAS.thripathaka);
-    expect(evalStraight.isMastered).toBe(true);
-    expect(evalStraight.isValidHoldFrame).toBe(true);
-    expect(evalStraight.matchScore).toBeGreaterThanOrEqual(88);
-    const straightTimer = advanceHoldTimerState(
-      { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false },
-      evalStraight,
-      33
-    );
-    expect(straightTimer.hasValidAnchor).toBe(true);
-
-    // Pose 2: User bends thumb inward toward palm face
-    // - Joint bend angles are at canonical target: MCP 26°, IP 38°
-    // - Inward flexion moves thumb tip towards palm center away from index MCP: tipToIndexMcp = 0.52 > 0.45
-    const inwardThumbPose: typeof baseKinematics = {
+    // Pose 1: Authentic Kathakali inward-bent thumb from dataset (Pose2Gest Hastalakshana Deepika #17)
+    // - Joint bend angles: MCP ~26°, IP ~38° (CORRECT)
+    // - Inward flexion alongside palm face: radialGap = -0.04 (<= 0.18), tipToIndex = 0.506 (<= 0.62)
+    const authenticInwardThumbPose: typeof baseKinematics = {
       ...baseKinematics,
       ...fourFingersStraight,
       thumb: { mcp: 26, pip: 38 },
       thumbPlacement: {
         ...baseKinematics.thumbPlacement!,
-        radialGapFromIndexMcp: -0.15, // tucked inward past index MCP (passes <= 0.15)
-        tipToIndexMcp: 0.52, // exceeds maxAllowedPalmRatio: 0.45
+        radialGapFromIndexMcp: -0.04, // tucked inward (dataset mean -0.012)
+        tipToIndexMcp: 0.506, // matches tripataka_sample.jpg dataset measurement
       },
     };
 
-    const evalInward = evaluateMudraKinematics(inwardThumbPose, CANONICAL_MUDRAS.thripathaka);
+    const evalInward = evaluateMudraKinematics(authenticInwardThumbPose, CANONICAL_MUDRAS.thripathaka);
 
-    // 1. Root Cause Analysis: Capped at 65% and hold accumulation blocked
-    expect(evalInward.isMastered).toBe(false);
-    expect(evalInward.isValidHoldFrame).toBe(false);
-    expect(evalInward.matchScore).toBe(65);
-    expect(evalInward.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
-    expect(evalInward.primaryDirective).toBe(
-      'Keep your thumb tip tucked closely alongside the base of your fingers on the palm.'
-    );
+    // 1. With empirically calibrated bounds, authentic inward-bent thumb PASSES mastery cleanly!
+    expect(evalInward.isMastered).toBe(true);
+    expect(evalInward.isValidHoldFrame).toBe(true);
+    expect(evalInward.matchScore).toBeGreaterThanOrEqual(88);
+    expect(evalInward.poseStatus).toBe('ALL_CRITERIA_WITHIN_RANGE');
 
-    // 2. Explains why the skeleton was drawn entirely green:
-    // Joint flexion evaluations for thumb and fingers are all CORRECT
-    const thumbMcpEval = evalInward.jointEvaluations.find((j) => j.jointKey === 'thumb.mcp')!;
-    const thumbPipEval = evalInward.jointEvaluations.find((j) => j.jointKey === 'thumb.pip')!;
-    expect(thumbMcpEval.status).toBe('CORRECT');
-    expect(thumbPipEval.status).toBe('CORRECT');
-
-    // Only the thumb placement requirement failed:
-    const tipPlacementEval = evalInward.jointEvaluations.find(
-      (j) => j.jointKey === 'thumbPlacement.tipToIndexMcp'
-    )!;
-    expect(tipPlacementEval.status).not.toBe('CORRECT');
-
-    // 3. Hold timer does NOT accumulate time on failing inward pose
     const inwardTimer = advanceHoldTimerState(
       { holdElapsedMs: 0, dropoutElapsedMs: 0, isHoldMastered: false },
       evalInward,
       33
     );
-    expect(inwardTimer.holdElapsedMs).toBe(0); // no hold progress credited
-    expect(inwardTimer.hasValidAnchor).toBe(false);
-    expect(inwardTimer.isHoldMastered).toBe(false);
+    expect(inwardTimer.hasValidAnchor).toBe(true);
+
+    // 2. Outward abducted thumb (e.g. radialGap = +0.60, tipToIndex = 0.68) is REJECTED
+    const outwardThumbPose: typeof baseKinematics = {
+      ...baseKinematics,
+      ...fourFingersStraight,
+      thumb: { mcp: 26, pip: 38 },
+      thumbPlacement: {
+        ...baseKinematics.thumbPlacement!,
+        radialGapFromIndexMcp: 0.60, // abducted outward (fails <= 0.18)
+        tipToIndexMcp: 0.68, // fails <= 0.62
+      },
+    };
+
+    const evalOutward = evaluateMudraKinematics(outwardThumbPose, CANONICAL_MUDRAS.thripathaka);
+    expect(evalOutward.isMastered).toBe(false);
+    expect(evalOutward.isValidHoldFrame).toBe(false);
+    expect(evalOutward.matchScore).toBeLessThanOrEqual(65);
+    expect(evalOutward.poseStatus).toBe('ACTIONABLE_ADJUSTMENT');
+    expect(evalOutward.primaryDirective).toContain(
+      'tuck your thumb inward alongside your palm face rather than abducting outward'
+    );
+
+    // 3. Excessively far thumb tip (e.g. tipToIndex = 0.72) is REJECTED
+    const farTipPose: typeof baseKinematics = {
+      ...baseKinematics,
+      ...fourFingersStraight,
+      thumb: { mcp: 26, pip: 38 },
+      thumbPlacement: {
+        ...baseKinematics.thumbPlacement!,
+        radialGapFromIndexMcp: -0.04,
+        tipToIndexMcp: 0.72, // exceeds maxAllowedPalmRatio: 0.62
+      },
+    };
+
+    const evalFarTip = evaluateMudraKinematics(farTipPose, CANONICAL_MUDRAS.thripathaka);
+    expect(evalFarTip.isMastered).toBe(false);
+    expect(evalFarTip.isValidHoldFrame).toBe(false);
+    expect(evalFarTip.matchScore).toBeLessThanOrEqual(65);
+    expect(evalFarTip.primaryDirective).toContain(
+      'Keep your thumb tip tucked closely alongside your palm face'
+    );
   });
 
   test('verifies layout stability across wide (1280px) and narrow (375px) viewports and telemetry snapshot', async ({

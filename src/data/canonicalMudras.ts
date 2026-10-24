@@ -341,9 +341,10 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       {
         feature: 'radialGapFromIndexMcp',
         label: 'Thumb Inward Palmar Placement',
-        targetPalmRatio: -0.1,
-        tolerancePalmRatio: 0.25,
-        maxAllowedPalmRatio: 0.15,
+        targetPalmRatio: -0.05,
+        tolerancePalmRatio: 0.2,
+        minAllowedPalmRatio: -0.35,
+        maxAllowedPalmRatio: 0.18,
         weight: 3.0,
         isMandatoryGate: true,
         directive:
@@ -352,13 +353,14 @@ export const CANONICAL_MUDRAS: Record<string, CanonicalMudra> = {
       {
         feature: 'tipToIndexMcp',
         label: 'Thumb Tip Proximity to Palm',
-        targetPalmRatio: 0.28,
-        tolerancePalmRatio: 0.16,
-        maxAllowedPalmRatio: 0.45,
+        targetPalmRatio: 0.35,
+        tolerancePalmRatio: 0.25,
+        minAllowedPalmRatio: 0,
+        maxAllowedPalmRatio: 0.62,
         weight: 2.0,
         isMandatoryGate: true,
         directive:
-          'Keep your thumb tip tucked closely alongside the base of your fingers on the palm.',
+          'Keep your thumb tip tucked closely alongside your palm face.',
       },
     ],
     targets: {
