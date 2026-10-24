@@ -1601,6 +1601,20 @@ const MudraPracticePage: React.FC = () => {
                     </Tag>
                   ))}
                 </div>
+                <div style={{ marginTop: '12px' }}>
+                  <Text type="secondary" style={{ fontSize: '11px', display: 'block', opacity: 0.8 }}>
+                    Reference imagery courtesy of the{' '}
+                    <a
+                      href="https://github.com/kavitharaju/KathakaliMudraDataset"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: 'inherit', textDecoration: 'underline' }}
+                    >
+                      Kathakali Mudra Dataset
+                    </a>{' '}
+                    (IIIT-Kottayam), licensed under CC BY-SA 4.0.
+                  </Text>
+                </div>
               </div>
             </Flex>
           </Card>
