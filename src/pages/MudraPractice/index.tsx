@@ -29,6 +29,7 @@ import {
   ReloadOutlined,
   CodeOutlined,
   CopyOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStyleToken } from 'themeStyles';
@@ -1204,9 +1205,20 @@ const MudraPracticePage: React.FC = () => {
                 </Button>
               )}
               <Button
-                type={isWebcamActive ? 'default' : 'primary'}
+                type="primary"
                 danger={isWebcamActive}
+                icon={isWebcamActive ? <StopOutlined /> : <CameraOutlined />}
                 onClick={isWebcamActive ? stopWebcam : startWebcam}
+                style={
+                  isWebcamActive
+                    ? {
+                        backgroundColor: '#ff4d4f',
+                        borderColor: '#ff4d4f',
+                        color: '#ffffff',
+                        fontWeight: 600,
+                      }
+                    : undefined
+                }
               >
                 {isWebcamActive ? 'Stop Webcam' : 'Start Webcam'}
               </Button>

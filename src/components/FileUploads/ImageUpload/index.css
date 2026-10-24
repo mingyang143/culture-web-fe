@@ -13,15 +13,15 @@
   background-color: #2b2d38;
 }
 
-.ant-btn-primary,
-.ant-btn-default {
+.ant-modal .ant-btn-primary,
+.ant-modal .ant-btn-default {
   color: #ffffff;
   background-color: #db2a6b;
   border: none;
 }
 
-.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover,
-.ant-btn-default:not(:disabled):not(.ant-btn-disabled):hover {
+.ant-modal .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover,
+.ant-modal .ant-btn-default:not(:disabled):not(.ant-btn-disabled):hover {
   background-color: #c81f58;
   color: #ffffff;
 }
