@@ -17,7 +17,7 @@ export const JOINT_TRIPLETS: Record<string, string> = {
   'pinky.mcp': '0-17-18',
   'pinky.pip': '17-18-19',
   'pinky.dip': '18-19-20',
-  spreadThumbIndex: '1→2 ∠ 5→6',
+  spreadThumbIndex: '2→3 ∠ 5→6',
   spreadIndexMiddle: '5→6 ∠ 9→10',
   spreadMiddleRing: '9→10 ∠ 13→14',
   spreadRingPinky: '13→14 ∠ 17→18',
@@ -381,7 +381,8 @@ export function extractHandKinematics(
   const pinkyDipAngle = calculateJointAngle(norm[18], norm[19], norm[20]);
 
   // Proximal finger bone vectors for calculating spreads (in degrees)
-  const vThumb = createVector(norm[1], norm[2]);
+  // Thumb uses MCP -> IP (its proximal phalanx), not CMC -> MCP (the metacarpal inside the palm).
+  const vThumb = createVector(norm[2], norm[3]);
   const vIndex = createVector(norm[5], norm[6]);
   const vMiddle = createVector(norm[9], norm[10]);
   const vRing = createVector(norm[13], norm[14]);

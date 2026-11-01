@@ -1,0 +1,30 @@
+## eval/results/replay_2026-11-01_thumb-cmc-mcp.json
+thripathaka: detected 40, mastered 37, mean 96.2, median 99, gate pass 38 tripataka_user1_03.jpg tripataka_user7_11.jpg
+pathaka: detected 38, mastered 28, mean 93.1, median 98, gate pass 38 
+mudrakhyam: detected 38, mastered 35, mean 95.7, median 97, gate pass 38 
+katakam: detected 36, mastered 20, mean 79.6, median 90, gate pass 32 kataka_user5_01.jpg kataka_user7_08.jpg kataka_user8_04.jpg kataka_user8_07.jpg
+mushti: detected 37, mastered 33, mean 95.3, median 98, gate pass 37 
+total: detected 189, mastered 153
+spreadThumbIndex: best 56/78 = 71.8% at cut 46.94 (Thripathaka <) | Thripathaka median 40.55 [30.54, 57.39] | Pathaka median 48.47 [6.56, 70.96]
+  Thripathaka per-performer medians (n): user1=55.99 (2), user2=31.26 (2), user3=47.13 (8), user4=37.03 (3), user5=38.24 (3), user7=39.27 (12), user8=40.07 (10)
+radialGapFromIndexMcp: best 72/78 = 92.3% at cut 0.18 (Thripathaka <) | Thripathaka median -0.02 [-0.16, 0.18] | Pathaka median 0.44 [0.05, 0.7]
+  Thripathaka per-performer medians (n): user1=0.07 (2), user2=-0.04 (2), user3=-0.09 (8), user4=0.1 (3), user5=0.03 (3), user7=-0.06 (12), user8=0.02 (10)
+tipToIndexMcp: best 62/78 = 79.5% at cut 0.54 (Thripathaka <) | Thripathaka median 0.5 [0.17, 0.6] | Pathaka median 0.56 [0.28, 0.76]
+  Thripathaka per-performer medians (n): user1=0.34 (2), user2=0.51 (2), user3=0.52 (8), user4=0.52 (3), user5=0.55 (3), user7=0.47 (12), user8=0.48 (10)
+thumbIp: best 67/78 = 85.9% at cut 26.46 (Thripathaka >=) | Thripathaka median 35.45 [17.84, 54.31] | Pathaka median 15.6 [3.32, 39.65]
+  Thripathaka per-performer medians (n): user1=51.09 (2), user2=34.88 (2), user3=37.79 (8), user4=18.34 (3), user5=27.78 (3), user7=36.07 (12), user8=35.61 (10)
+## eval/results/replay_2026-11-01_thumb-mcp-ip.json
+thripathaka: detected 40, mastered 37, mean 96.2, median 99, gate pass 38 tripataka_user1_03.jpg tripataka_user7_11.jpg
+pathaka: detected 38, mastered 28, mean 93.1, median 98, gate pass 38 
+mudrakhyam: detected 38, mastered 35, mean 95.7, median 97, gate pass 38 
+katakam: detected 36, mastered 20, mean 79.6, median 90, gate pass 32 kataka_user5_01.jpg kataka_user7_08.jpg kataka_user8_04.jpg kataka_user8_07.jpg
+mushti: detected 37, mastered 33, mean 95.3, median 98, gate pass 37 
+total: detected 189, mastered 153
+spreadThumbIndex: best 60/78 = 76.9% at cut 28.07 (Thripathaka <) | Thripathaka median 24.28 [10.34, 41.99] | Pathaka median 35.71 [13.54, 66.92]
+  Thripathaka per-performer medians (n): user1=38.11 (2), user2=29.01 (2), user3=26.64 (8), user4=11.88 (3), user5=25.9 (3), user7=22.29 (12), user8=18.35 (10)
+radialGapFromIndexMcp: best 72/78 = 92.3% at cut 0.18 (Thripathaka <) | Thripathaka median -0.02 [-0.16, 0.18] | Pathaka median 0.44 [0.05, 0.7]
+  Thripathaka per-performer medians (n): user1=0.07 (2), user2=-0.04 (2), user3=-0.09 (8), user4=0.1 (3), user5=0.03 (3), user7=-0.06 (12), user8=0.02 (10)
+tipToIndexMcp: best 62/78 = 79.5% at cut 0.54 (Thripathaka <) | Thripathaka median 0.5 [0.17, 0.6] | Pathaka median 0.56 [0.28, 0.76]
+  Thripathaka per-performer medians (n): user1=0.34 (2), user2=0.51 (2), user3=0.52 (8), user4=0.52 (3), user5=0.55 (3), user7=0.47 (12), user8=0.48 (10)
+thumbIp: best 67/78 = 85.9% at cut 26.46 (Thripathaka >=) | Thripathaka median 35.45 [17.84, 54.31] | Pathaka median 15.6 [3.32, 39.65]
+  Thripathaka per-performer medians (n): user1=51.09 (2), user2=34.88 (2), user3=37.79 (8), user4=18.34 (3), user5=27.78 (3), user7=36.07 (12), user8=35.61 (10)
